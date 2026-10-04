@@ -269,9 +269,16 @@ select {
 .coverage-caption {
   margin-top: -0.2rem;
   text-align: center;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 700;
+  line-height: 1.25;
   color: white;
+}
+
+.upload-inline {
+  display: block;
+  margin-top: 0.15rem;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .filmstrip {

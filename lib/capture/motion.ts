@@ -18,6 +18,10 @@ export class MotionTracker {
   private lastMag = 0;
   private ema = 0;
   private accelPeak = 0;
+  private gyroDegPerSec = 0;
+  private gyroAt = 0;
+  private recentAccel = 0;
+  private recentAccelAt = 0;
   sensorsSeen = false;
 
   requestPermission() {
@@ -72,8 +76,16 @@ export class MotionTracker {
       stepDetected: this.stepSinceAccept,
       yawDeltaDeg,
       accelMagnitude: this.accelPeak || null,
+      gyroDegPerSec: this.fresh(this.gyroAt, this.gyroDegPerSec),
+      recentAccel: this.fresh(this.recentAccelAt, this.recentAccel),
       sensors: this.sensorsSeen,
     };
+  }
+
+  private fresh(at: number, value: number) {
+    if (!this.sensorsSeen && at === 0) return null;
+    if (at === 0 || performance.now() - at > 500) return this.sensorsSeen ? 0 : null;
+    return value;
   }
 
   private currentHeading() {
@@ -125,8 +137,17 @@ export class MotionTracker {
       stepAt = 1.15;
     }
 
+    const rate = event.rotationRate;
+    if (rate && (rate.alpha != null || rate.beta != null || rate.gamma != null)) {
+      this.sensorsSeen = true;
+      this.gyroDegPerSec = Math.hypot(rate.alpha ?? 0, rate.beta ?? 0, rate.gamma ?? 0);
+      this.gyroAt = performance.now();
+    }
+
     if (magnitude == null) return;
     this.sensorsSeen = true;
+    this.recentAccel = magnitude;
+    this.recentAccelAt = performance.now();
     this.accelPeak = Math.max(this.accelPeak * 0.9, magnitude);
     const now = performance.now();
     if (magnitude > stepAt && magnitude >= this.lastMag && now - this.lastStepAt > 280) {

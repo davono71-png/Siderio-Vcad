@@ -4,6 +4,8 @@ type WorkerResult = {
   id: number;
   laplacian: number;
   difference: number | null;
+  cornersPerK: number;
+  gradient: number;
   gray: ArrayBuffer;
   width: number;
   height: number;
@@ -33,6 +35,8 @@ export class FrameAnalyzer {
         done({
           laplacian: data.laplacian,
           difference: data.difference,
+          cornersPerK: data.cornersPerK,
+          gradient: data.gradient,
           gray: new Uint8Array(data.gray),
           width: data.width,
           height: data.height,

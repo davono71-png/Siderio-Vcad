@@ -25,9 +25,19 @@ export type Project = {
   createdAt: string;
   updatedAt: string;
   job: ProjectJob;
+  scaleChecklist: ScaleChecklist;
 };
 
 export type RejectReason = "mosso" | "simile";
+
+/** Accepted-shot warnings. They do not drop the photo. */
+export type PhotoWarning = "rotazione" | "sovrapposizione" | "texture";
+
+export type ScaleChecklist = {
+  lunghezza: boolean;
+  larghezza: boolean;
+  altezza: boolean;
+};
 
 export type PhotoPose = {
   alpha: number | null;
@@ -50,12 +60,15 @@ export type PhotoMotion = {
   stepDetected: boolean;
   yawDeltaDeg: number | null;
   accelMagnitude: number | null;
+  gyroDegPerSec: number | null;
 };
 
 export type PhotoQuality = {
   laplacianVariance: number;
   difference: number | null;
   threshold: number;
+  cornersPerK: number;
+  gradient: number;
 };
 
 export type PhotoMeta = {
@@ -66,8 +79,15 @@ export type PhotoMeta = {
   sequence: number;
   accepted: boolean;
   rejectReason: RejectReason | null;
-  flag: "rotazione" | null;
+  /** @deprecated Prefer warnings. Kept for archives written before the texture split. */
+  flag: PhotoWarning | null;
+  warnings: PhotoWarning[];
   mime: "image/jpeg";
+  /** R2 object key once the PUT has succeeded. */
+  r2Key: string | null;
+  uploadedAt: string | null;
+  /** False after the operator frees the local JPEG. The thumb and metadata stay. */
+  localBlob: boolean;
   byteSize: number;
   /** JPEG pixel size before EXIF orientation. */
   width: number;
@@ -116,7 +136,7 @@ export type NewProjectInput = {
   notes: string;
 };
 
-export type ProjectPatch = Partial<Pick<Project, "name" | "kind" | "notes" | "job">>;
+export type ProjectPatch = Partial<Pick<Project, "name" | "kind" | "notes" | "job" | "scaleChecklist">>;
 
 export type NewPhotoInput = {
   projectId: string;
@@ -124,7 +144,7 @@ export type NewPhotoInput = {
   thumb: Blob;
   accepted: boolean;
   rejectReason: RejectReason | null;
-  flag: "rotazione" | null;
+  warnings: PhotoWarning[];
   width: number;
   height: number;
   exifOrientation: number;
@@ -141,3 +161,33 @@ export type ThumbRecord = {
   projectId: string;
   blob: Blob;
 };
+
+export type UploadKind = "photo" | "manifest";
+
+export type UploadPhase = "in_coda" | "invio" | "caricata" | "errore";
+
+export type UploadRecord = {
+  id: string;
+  projectId: string;
+  kind: UploadKind;
+  key: string;
+  phase: UploadPhase;
+  attempts: number;
+  nextAttemptAt: number;
+  lastError: string | null;
+  again: boolean;
+  updatedAt: string;
+};
+
+export type UploadSummary = {
+  accepted: number;
+  uploaded: number;
+  pending: number;
+  failed: number;
+  reclaimable: number;
+  lastError: string | null;
+};
+
+export function emptyChecklist(): ScaleChecklist {
+  return { lunghezza: false, larghezza: false, altezza: false };
+}

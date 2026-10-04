@@ -9,8 +9,9 @@ type Props = {
 const TIPS = [
   "Muoviti tra 4 e 6 posizioni intorno alla stanza o lungo la facciata. Non ruotare solo sui talloni.",
   "Ogni foto deve sovrapporsi alla precedente del 60–80%: lo stesso angolo deve vedersi in più scatti.",
-  "Luci accese, tende aperte. Evita controluce forte e foto mosse.",
-  "Inquadra anche i bordi del pavimento e del soffitto, non solo il centro delle pareti.",
+  "Luci accese, evita sole diretto e riflessi, apri le tende per 2–3 foto della finestra.",
+  "Inquadra anche i bordi del pavimento e del soffitto. Alza il telefono a 30–45° verso gli angoli del soffitto.",
+  "Dagli angoli della stanza guarda lungo le pareti, con un passo tra uno scatto e l’altro. Non ruotare più di circa 30°.",
   "Sulle superfici bianche e lisce attacca fogli con texture: giornale, cartone o nastro a scacchi.",
 ];
 

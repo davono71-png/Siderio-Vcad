@@ -1,7 +1,10 @@
-import { analyzeRgba, varianceOfLaplacian } from "../lib/capture/analyze";
+import { analyzeRgba, textureScores, varianceOfLaplacian } from "../lib/capture/analyze";
 import { cameraDirection } from "../lib/capture/direction";
-import { hintFor, selectFrame } from "../lib/capture/select";
+import { hintFor, pitchBand, selectFrame, type SelectContext } from "../lib/capture/select";
+import { duplicateMeasurement } from "../lib/measure/checks";
+import { checkPresign, photoObjectKey } from "../lib/storage/keys";
 import { orientedSize, orientedToRaw, readJpegInfo } from "../lib/jpeg";
+import type { Measurement } from "../lib/data/types";
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -26,37 +29,84 @@ const first = analyzeRgba(rgba, 16, 16, null);
 const same = analyzeRgba(rgba, 16, 16, first);
 assert(same.difference != null && same.difference < 1, "due frame uguali devono risultare simili");
 
-const blurry = selectFrame(2, null, {
+const steady: SelectContext = {
   recentLaplacians: [200, 180, 190],
   yawDeltaDeg: null,
   stepDetected: false,
   hasPrevious: false,
-});
-assert(!blurry.accept && blurry.reason === "mosso", "varianza bassa deve essere scartata");
+  gyroDegPerSec: null,
+  recentAccel: null,
+};
 
-const similar = selectFrame(120, 3, {
-  recentLaplacians: [100, 110, 130],
-  yawDeltaDeg: 2,
-  stepDetected: false,
-  hasPrevious: true,
-});
+const blurry = selectFrame(
+  { laplacian: 2, difference: null, cornersPerK: 4, gradient: 12 },
+  steady,
+);
+assert(!blurry.accept && blurry.reason === "mosso", "stesso inquadratura molto più morbida, senza sensori, è mossa");
+
+const wall = selectFrame(
+  { laplacian: 12, difference: 40, cornersPerK: 0.2, gradient: 3 },
+  {
+    ...steady,
+    hasPrevious: true,
+    yawDeltaDeg: 12,
+    stepDetected: true,
+    gyroDegPerSec: 3,
+    recentAccel: 0.2,
+  },
+);
+assert(wall.accept && wall.reason == null && wall.warnings.includes("texture"), "parete liscia e ferma va tenuta con avviso");
+
+const shaken = selectFrame(
+  { laplacian: 8, difference: 18, cornersPerK: 0.4, gradient: 3 },
+  {
+    ...steady,
+    hasPrevious: true,
+    yawDeltaDeg: 6,
+    gyroDegPerSec: 90,
+    recentAccel: 0.4,
+  },
+);
+assert(!shaken.accept && shaken.reason === "mosso", "gyro alto e nitidezza crollata è mossa");
+
+const similar = selectFrame(
+  { laplacian: 120, difference: 3, cornersPerK: 8, gradient: 20 },
+  {
+    recentLaplacians: [100, 110, 130],
+    yawDeltaDeg: 2,
+    stepDetected: false,
+    hasPrevious: true,
+    gyroDegPerSec: 1,
+    recentAccel: 0.1,
+  },
+);
 assert(!similar.accept && similar.reason === "simile", "poca differenza deve essere scartata");
 
-const spin = selectFrame(120, 18, {
-  recentLaplacians: [100, 110, 130],
-  yawDeltaDeg: 40,
-  stepDetected: false,
-  hasPrevious: true,
-});
-assert(spin.accept && spin.flag === "rotazione", "rotazione sul posto va segnalata ma tenuta");
+const spin = selectFrame(
+  { laplacian: 120, difference: 18, cornersPerK: 8, gradient: 20 },
+  {
+    recentLaplacians: [100, 110, 130],
+    yawDeltaDeg: 25,
+    stepDetected: false,
+    hasPrevious: true,
+    gyroDegPerSec: 2,
+    recentAccel: 0.2,
+  },
+);
+assert(spin.accept && spin.warnings.includes("rotazione"), "rotazione sul posto va segnalata ma tenuta");
 
-const step = selectFrame(120, 18, {
-  recentLaplacians: [100, 110, 130],
-  yawDeltaDeg: 40,
-  stepDetected: true,
-  hasPrevious: true,
-});
-assert(step.accept && step.flag == null, "un passo non è rotazione sul posto");
+const wide = selectFrame(
+  { laplacian: 120, difference: 22, cornersPerK: 8, gradient: 20 },
+  {
+    recentLaplacians: [100, 110, 130],
+    yawDeltaDeg: 40,
+    stepDetected: true,
+    hasPrevious: true,
+    gyroDegPerSec: 2,
+    recentAccel: 0.2,
+  },
+);
+assert(wide.accept && wide.warnings.includes("sovrapposizione") && !wide.warnings.includes("rotazione"), "troppo yaw avvisa, un passo non è rotazione");
 
 const flat = cameraDirection(0, 0, 0);
 assert(flat.up < -0.9, "telefono a faccia in su: la posteriore guarda il pavimento");
@@ -72,7 +122,7 @@ const info = readJpegInfo(jpeg);
 assert(info.width === 8 && info.height === 4 && info.orientation === 6, `jpeg letto male: ${JSON.stringify(info)}`);
 
 const hint = hintFor({
-  decision: { accept: true, reason: null, flag: null, threshold: 1 },
+  decision: { accept: true, reason: null, warnings: [], threshold: 1 },
   shots: [
     { headingDeg: 0, elevationDeg: 0 },
     { headingDeg: 20, elevationDeg: 0 },
@@ -81,7 +131,37 @@ const hint = hintFor({
   ],
   sensors: true,
 });
-assert(hint === "Copri il soffitto", hint);
+assert(hint.includes("soffitto"), hint);
+assert(pitchBand(35) === "su" && pitchBand(0) === "orizzonte" && pitchBand(-40) === "giu", "fasce di pitch");
+
+const plain = new Uint8Array(64 * 64).fill(128);
+const checks = new Uint8Array(64 * 64);
+for (let y = 0; y < 64; y += 1) {
+  for (let x = 0; x < 64; x += 1) {
+    checks[y * 64 + x] = (Math.floor(x / 8) + Math.floor(y / 8)) % 2 === 0 ? 0 : 255;
+  }
+}
+const flatTexture = textureScores(plain, 64, 64);
+const busyTexture = textureScores(checks, 64, 64);
+assert(busyTexture.cornersPerK > flatTexture.cornersPerK + 5, `texture ${busyTexture.cornersPerK} vs ${flatTexture.cornersPerK}`);
+assert(busyTexture.gradient > flatTexture.gradient + 20, `gradiente ${busyTexture.gradient} vs ${flatTexture.gradient}`);
+
+const pair: Measurement = {
+  id: "1",
+  projectId: "p",
+  pointA: "a",
+  pointB: "b",
+  distanceMm: 625,
+  note: "",
+  createdAt: "",
+};
+assert(duplicateMeasurement([pair], "b", "a")?.id === "1", "coppia di punti duplicata");
+assert(duplicateMeasurement([pair], "a", "c") == null, "coppia diversa");
+
+const key = photoObjectKey("11111111-1111-4111-8111-111111111111", 3, "22222222-2222-4222-8222-222222222222");
+assert(checkPresign({ op: "put", key, contentType: "image/jpeg", contentLength: 1000 }).ok, key);
+assert(!checkPresign({ op: "put", key: "rilievi/altro.jpg", contentType: "image/jpeg", contentLength: 1000 }).ok, "chiave libera rifiutata");
+assert(!checkPresign({ op: "put", key, contentType: "text/plain", contentLength: 1000 }).ok, "tipo rifiutato");
 
 console.log("self-check ok");
 

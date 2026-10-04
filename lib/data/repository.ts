@@ -8,6 +8,8 @@ import type {
   ProjectJob,
   ProjectPatch,
   ThumbRecord,
+  UploadRecord,
+  UploadSummary,
 } from "./types";
 
 /**
@@ -24,7 +26,7 @@ export interface RilievoRepository {
   deleteProject(id: string): Promise<void>;
 
   listPhotos(projectId: string): Promise<PhotoMeta[]>;
-  getPhoto(id: string): Promise<{ meta: PhotoMeta; blob: Blob } | null>;
+  getPhoto(id: string): Promise<{ meta: PhotoMeta; blob: Blob | null } | null>;
   listThumbs(projectId: string): Promise<ThumbRecord[]>;
   addPhoto(input: NewPhotoInput): Promise<PhotoMeta>;
   deletePhoto(id: string): Promise<void>;
@@ -38,16 +40,27 @@ export interface RilievoRepository {
   deleteMeasurement(id: string): Promise<void>;
 
   /**
-   * Placeholder for the GPU worker queue. Local builds record the attempt
-   * and explain that upload is not wired yet.
+   * Placeholder for the GPU worker queue. Photos may already be in R2;
+   * reconstruction itself is not wired yet.
    */
   enqueueReconstruction(projectId: string): Promise<ProjectJob>;
+
+  enqueuePhotoUpload(meta: PhotoMeta): Promise<void>;
+  touchManifest(projectId: string, delayMs?: number): Promise<void>;
+  uploadSummary(projectId: string): Promise<UploadSummary>;
+  retryUploads(projectId: string): Promise<void>;
+  expeditePending(): Promise<void>;
+  resetStaleClaims(olderThanMs: number): Promise<void>;
+  claimUploads(now: number, limit: number): Promise<UploadRecord[]>;
+  finishUpload(id: string, ok: boolean, errorCode: string | null, permanent: boolean): Promise<void>;
+  markUploadingAgain(id: string): Promise<void>;
+  releaseUploadedBlobs(projectId: string): Promise<number>;
 }
 
 export function freshJob(partial?: Partial<ProjectJob>): ProjectJob {
   return {
     status: "non_inviato",
-    message: "Le foto restano su questo dispositivo finché non le invii al worker.",
+    message: "Le foto restano su questo telefono e, con la rete, vengono copiate sull’archivio. Il worker non è ancora collegato.",
     progress: null,
     updatedAt: new Date().toISOString(),
     ...partial,

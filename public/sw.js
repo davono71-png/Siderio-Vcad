@@ -1,4 +1,4 @@
-const CACHE = "siderio-vcad-v4";
+const CACHE = "siderio-vcad-v5";
 const PRECACHE = [
   "/",
   "/manifest.webmanifest",
@@ -32,6 +32,7 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith("/api/")) return;
 
   const navigate = req.mode === "navigate";
   const immutable = url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/brand/");

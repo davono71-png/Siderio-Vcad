@@ -1,6 +1,6 @@
 "use client";
 
-import { elevationBand, type CoverageSample } from "@/lib/capture/select";
+import { countBandSectors, pitchBand, SELECT, type CoverageSample, type PitchBand } from "@/lib/capture/select";
 
 type Props = {
   shots: CoverageSample[];
@@ -32,18 +32,24 @@ export function CoverageMap({ shots, liveHeading }: Props) {
   const counts = new Map<string, number>();
   for (const shot of shots) {
     const sector = Math.floor(((shot.headingDeg % 360) + 360) % 360 / (360 / SECTORS)) % SECTORS;
-    const band = elevationBand(shot.elevationDeg);
+    const band = pitchBand(shot.elevationDeg);
     const key = `${sector}:${band}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const bands = [
-    { id: "basso" as const, inner: 70, outer: 92, label: "Pavimento" },
-    { id: "medio" as const, inner: 46, outer: 68, label: "Pareti" },
-    { id: "alto" as const, inner: 22, outer: 44, label: "Soffitto" },
+  const bands: { id: PitchBand; inner: number; outer: number }[] = [
+    { id: "giu", inner: 70, outer: 92 },
+    { id: "orizzonte", inner: 46, outer: 68 },
+    { id: "su", inner: 22, outer: 44 },
   ];
 
-  const covered = shots.length;
+  const up = countBandSectors(shots, "su");
+  const horizon = countBandSectors(shots, "orizzonte");
+  const down = countBandSectors(shots, "giu");
+  const caption =
+    shots.length === 0
+      ? "Su 30–45° al centro"
+      : `Su ${up}/${SELECT.upSectorsNeeded} · Orizz. ${horizon} · Giù ${down}`;
 
   return (
     <div className="coverage-card">
@@ -80,7 +86,7 @@ export function CoverageMap({ shots, liveHeading }: Props) {
           N
         </text>
       </svg>
-      <p className="coverage-caption">{covered === 0 ? "Soffitto al centro" : `${covered} foto`}</p>
+      <p className="coverage-caption">{caption}</p>
     </div>
   );
 }

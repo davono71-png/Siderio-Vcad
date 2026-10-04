@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { getRepository } from "@/lib/data";
-import type { Measurement, NotablePoint, PhotoMeta } from "@/lib/data/types";
+import type { Measurement, NotablePoint, PhotoMeta, ScaleChecklist } from "@/lib/data/types";
+import { emptyChecklist } from "@/lib/data/types";
 import { createId } from "@/lib/data/id";
+import { closeViews, duplicateMeasurement } from "@/lib/measure/checks";
+import { scheduleManifest } from "@/lib/upload/runner";
 import { PageHeader } from "../ui/PageHeader";
 
 type Thumb = { photo: PhotoMeta; url: string };
@@ -19,6 +22,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   const [distance, setDistance] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [checklist, setChecklist] = useState<ScaleChecklist>(emptyChecklist());
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +54,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
       setPhotos(next);
       setPoints(storedPoints);
       setMeasurements(storedMeasurements);
+      setChecklist(project.scaleChecklist ?? emptyChecklist());
       setPointA(storedPoints[0]?.id ?? "");
       setPointB(storedPoints[1]?.id ?? storedPoints[0]?.id ?? "");
     })();
@@ -60,6 +65,22 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   const labels = useMemo(() => new Map(points.map((point) => [point.id, point.label])), [points]);
+  const photoById = useMemo(() => new Map(photos.map((item) => [item.photo.id, item.photo])), [photos]);
+  const weakPoints = points.filter((point) => closeViews(point, photoById).length > 0);
+  const missingDirections = (
+    [
+      ["lunghezza", "lunghezza"],
+      ["larghezza", "larghezza"],
+      ["altezza", "altezza"],
+    ] as const
+  ).filter(([key]) => !checklist[key]);
+
+  async function toggleCheck(key: keyof ScaleChecklist) {
+    const next = { ...checklist, [key]: !checklist[key] };
+    setChecklist(next);
+    await getRepository().updateProject(projectId, { scaleChecklist: next });
+    scheduleManifest(projectId);
+  }
 
   async function addMeasurement(event: FormEvent) {
     event.preventDefault();
@@ -71,6 +92,10 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     }
     if (!Number.isFinite(millimeters) || millimeters <= 0) {
       setError("Inserisci la distanza in millimetri, per esempio 930.");
+      return;
+    }
+    if (duplicateMeasurement(measurements, pointA, pointB)) {
+      setError("Questa coppia di punti è già quotata. Elimina la quota precedente se vuoi cambiarla.");
       return;
     }
     const measurement: Measurement = {
@@ -85,11 +110,13 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     await getRepository().upsertMeasurement(measurement);
     setMeasurements((current) => [...current, measurement]);
     setNote("");
+    scheduleManifest(projectId);
   }
 
   async function removeMeasurement(id: string) {
     await getRepository().deleteMeasurement(id);
     setMeasurements((current) => current.filter((item) => item.id !== id));
+    scheduleManifest(projectId);
   }
 
   async function renamePoint(point: NotablePoint, nextLabel: string) {
@@ -98,6 +125,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     const next = { ...point, label };
     await getRepository().upsertPoint(next);
     setPoints((current) => current.map((item) => (item.id === point.id ? next : item)));
+    scheduleManifest(projectId);
   }
 
   async function removePoint(point: NotablePoint) {
@@ -111,6 +139,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     setMeasurements((current) =>
       current.filter((item) => item.pointA !== point.id && item.pointB !== point.id),
     );
+    scheduleManifest(projectId);
   }
 
   if (missing) {
@@ -129,8 +158,39 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
       <PageHeader title="Quote" backHref={`/rilievo/${projectId}`} />
       <p className="text-sm leading-relaxed text-steel">
         Segna lo stesso punto su almeno due foto, poi scrivi una distanza nota in millimetri: una cornice da 930 mm,
-        un’altezza da 2690 mm.
+        un’altezza da 2690 mm. Serve almeno una quota per lunghezza, larghezza e altezza.
       </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {(
+          [
+            ["lunghezza", "Lunghezza"],
+            ["larghezza", "Larghezza"],
+            ["altezza", "Altezza"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={`chip ${checklist[key] ? "chip-on" : ""}`}
+            aria-pressed={checklist[key]}
+            onClick={() => void toggleCheck(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {measurements.length > 0 && missingDirections.length > 0 ? (
+        <p className="mt-2 text-sm text-steel">Manca: {missingDirections.map(([, label]) => label.toLowerCase()).join(", ")}.</p>
+      ) : null}
+      {weakPoints.length > 0 ? (
+        <ul className="mt-3 flex flex-col gap-1">
+          {weakPoints.map((point) => (
+            <li key={point.id} className="text-sm text-danger">
+              {point.label}: due foto a meno di 15° — triangolazione debole. Scatta da un altro punto della stanza.
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {photos.length === 0 ? (
         <div className="notebook-card mt-4 p-4">

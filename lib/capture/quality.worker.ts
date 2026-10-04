@@ -26,6 +26,8 @@ scope.onmessage = (event: MessageEvent<InMsg>) => {
       id,
       laplacian: analysis.laplacian,
       difference: analysis.difference,
+      cornersPerK: analysis.cornersPerK,
+      gradient: analysis.gradient,
       gray,
       width,
       height,

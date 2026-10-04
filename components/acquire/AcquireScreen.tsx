@@ -14,6 +14,8 @@ import {
   type CoverageSample,
 } from "@/lib/capture/select";
 import { getRepository } from "@/lib/data";
+import { enqueueAcceptedPhoto } from "@/lib/upload/runner";
+import { UploadStatus } from "../upload/UploadStatus";
 import { orientedSize, readJpegInfoFromBlob } from "@/lib/jpeg";
 import { Guidance } from "./Guidance";
 import { ScanPreview, type FilmFrame } from "./ScanPreview";
@@ -153,13 +155,24 @@ export function AcquireScreen({ projectId }: { projectId: string }) {
     const preview = await camera.sample();
     if (!preview || busyRef.current) return;
     const analysis = await analyzer.analyze(preview.image);
+    const snap = motionRef.current?.snapshot();
     historyRef.current = pushLaplacian(historyRef.current, analysis.laplacian);
-    const decision = selectFrame(analysis.laplacian, analysis.difference, {
-      recentLaplacians: historyRef.current.slice(0, -1),
-      yawDeltaDeg: null,
-      stepDetected: true,
-      hasPrevious: false,
-    });
+    const decision = selectFrame(
+      {
+        laplacian: analysis.laplacian,
+        difference: analysis.difference,
+        cornersPerK: analysis.cornersPerK,
+        gradient: analysis.gradient,
+      },
+      {
+        recentLaplacians: historyRef.current.slice(0, -1),
+        yawDeltaDeg: null,
+        stepDetected: true,
+        hasPrevious: false,
+        gyroDegPerSec: snap?.gyroDegPerSec ?? null,
+        recentAccel: snap?.recentAccel ?? null,
+      },
+    );
     if (decision.reason === "mosso" && performance.now() >= hintLockRef.current) {
       setHint("Tieni fermo il telefono");
     }
@@ -199,12 +212,22 @@ export function AcquireScreen({ projectId }: { projectId: string }) {
       const analysis = await analyzer.analyze(preview.image);
       const snap = motion.snapshot();
       const recent = historyRef.current;
-      const decision = selectFrame(analysis.laplacian, analysis.difference, {
-        recentLaplacians: recent,
-        yawDeltaDeg: snap.yawDeltaDeg,
-        stepDetected: snap.stepDetected,
-        hasPrevious: analyzer.lastAccepted != null,
-      });
+      const decision = selectFrame(
+        {
+          laplacian: analysis.laplacian,
+          difference: analysis.difference,
+          cornersPerK: analysis.cornersPerK,
+          gradient: analysis.gradient,
+        },
+        {
+          recentLaplacians: recent,
+          yawDeltaDeg: snap.yawDeltaDeg,
+          stepDetected: snap.stepDetected,
+          hasPrevious: analyzer.lastAccepted != null,
+          gyroDegPerSec: snap.gyroDegPerSec,
+          recentAccel: snap.recentAccel,
+        },
+      );
       historyRef.current = pushLaplacian(recent, analysis.laplacian);
       const text = hintFor({
         decision,
@@ -230,7 +253,7 @@ export function AcquireScreen({ projectId }: { projectId: string }) {
         thumb: preview.thumb,
         accepted: decision.accept,
         rejectReason: decision.reason,
-        flag: decision.flag,
+        warnings: decision.warnings,
         width,
         height,
         exifOrientation: info.orientation || 1,
@@ -242,15 +265,19 @@ export function AcquireScreen({ projectId }: { projectId: string }) {
           stepDetected: snap.stepDetected,
           yawDeltaDeg: snap.yawDeltaDeg,
           accelMagnitude: snap.accelMagnitude,
+          gyroDegPerSec: snap.gyroDegPerSec,
         },
         quality: {
           laplacianVariance: analysis.laplacian,
           difference: analysis.difference,
           threshold: decision.threshold,
+          cornersPerK: analysis.cornersPerK,
+          gradient: analysis.gradient,
         },
       });
 
       if (decision.accept) {
+        void enqueueAcceptedPhoto(meta);
         analyzer.remember(analysis);
         motion.markAccepted(snap.direction);
         const url = URL.createObjectURL(preview.thumb);
@@ -397,6 +424,7 @@ export function AcquireScreen({ projectId }: { projectId: string }) {
                 {camera.resolution ? ` · ${camera.resolution}` : ""}
                 {camera.stillsVia === "frame" ? " · fotogramma" : ""}
               </p>
+              <UploadStatus projectId={projectId} compact />
             </div>
             {camera.torchSupported ? (
               <button

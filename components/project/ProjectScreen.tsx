@@ -7,6 +7,8 @@ import { downloadBlob, exportProjectZip } from "@/lib/export/zip";
 import { getRepository } from "@/lib/data";
 import type { PhotoMeta, Project, ProjectKind } from "@/lib/data/types";
 import { formatWhen, kindLabel } from "@/lib/format";
+import { scheduleManifest } from "@/lib/upload/runner";
+import { UploadStatus } from "../upload/UploadStatus";
 import { PageHeader } from "../ui/PageHeader";
 import { Sheet } from "../ui/Sheet";
 
@@ -79,6 +81,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     });
     setProject(next);
     projectRef.current = next;
+    scheduleManifest(projectId);
   }
 
   async function onExport() {
@@ -151,6 +154,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
         {thumbs.length === 1 ? "1 foto" : `${thumbs.length} foto`} · {points} punti · {measures} quote · aggiornato{" "}
         {formatWhen(project.updatedAt)}
       </p>
+
+      <UploadStatus projectId={projectId} />
 
       <div className="mt-5 grid gap-2">
         <Link href={`/rilievo/${projectId}/acquisizione`} className="btn-primary bg-accent text-center text-ink">

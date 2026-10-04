@@ -8,6 +8,8 @@ import type { NotablePoint, PhotoMeta } from "@/lib/data/types";
 import { createId } from "@/lib/data/id";
 import { nextPointLabel } from "@/lib/format";
 import { orientedToRaw } from "@/lib/jpeg";
+import { fetchRemotePhoto } from "@/lib/upload/remote";
+import { scheduleManifest } from "@/lib/upload/runner";
 import { Sheet } from "../ui/Sheet";
 
 type View = { scale: number; x: number; y: number };
@@ -53,7 +55,12 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
           setError("Foto non trovata in questo rilievo.");
           return;
         }
-        const display = await uprightUrl(photo.blob, photo.meta);
+        const blob = photo.blob ?? (photo.meta.r2Key ? await fetchRemotePhoto(photo.meta.r2Key) : null);
+        if (!blob) {
+          setError("Foto non trovata su questo telefono.");
+          return;
+        }
+        const display = await uprightUrl(blob, photo.meta);
         if (cancelled) {
           URL.revokeObjectURL(display.url);
           return;
@@ -251,6 +258,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
         next = { id: createId(), projectId, label: name, observations: [observation] };
       }
       await repo.upsertPoint(next);
+      scheduleManifest(projectId);
       setPoints((current) => {
         const without = current.filter((point) => point.id !== next.id);
         return [...without, next].sort((a, b) => a.label.localeCompare(b.label, "it"));
@@ -272,6 +280,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
       observations: point.observations.filter((item) => item.photoId !== photoId),
     };
     await getRepository().upsertPoint(next);
+    scheduleManifest(projectId);
     setPoints((current) => current.map((item) => (item.id === pointId ? next : item)));
     setSelected(null);
   }
@@ -279,6 +288,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
   async function removePhoto() {
     if (!window.confirm("Eliminare questa foto dal rilievo?")) return;
     await getRepository().deletePhoto(photoId);
+    scheduleManifest(projectId);
     router.push(`/rilievo/${projectId}/quote`);
   }
 
