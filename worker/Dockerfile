@@ -140,6 +140,9 @@ RUN arch="$(cat /tmp/cuda-arch.txt)" \
     && rm -rf /tmp/nanoflann /src/nanoflann-1.7.1 \
     && curl -fsSL "https://github.com/cdcseacave/VCG/archive/${VCG_COMMIT}.tar.gz" | tar -xz -C /src \
     && curl -fsSL "https://github.com/cdcseacave/openMVS/archive/refs/tags/v${OPENMVS_VERSION}.tar.gz" | tar -xz -C /src \
+    && echo "OpenMVS: JPEG XL spento, le foto del rilievo sono JPEG e OpenCV 4.6 non ha quell'API" \
+    && sed -i 's/REQUIRED IMPORTED_TARGET/IMPORTED_TARGET/' "/src/openMVS-${OPENMVS_VERSION}/libs/IO/CMakeLists.txt" \
+    && sed -i 's/cv::IMWRITE_JPEGXL_QUALITY/cv::IMWRITE_JPEG_QUALITY/' "/src/openMVS-${OPENMVS_VERSION}/libs/Common/Types.inl" \
     && cmake -S "/src/openMVS-${OPENMVS_VERSION}" -B /tmp/openmvs-build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
