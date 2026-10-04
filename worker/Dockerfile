@@ -197,6 +197,10 @@ COPY --from=builder /opt/export/bin /opt/runtime/bin
 COPY --from=builder /opt/export/lib /opt/runtime/lib
 COPY --from=builder /opt/export/pycolmap /opt/venv/lib/python3.12/site-packages/pycolmap
 
+# curl, via OpenImageIO, carica Mozilla NSS (libnss3.so). Non è la NSS di glibc.
+RUN apt-get update && apt-get install -y --no-install-recommends libnss3 \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PATH="/opt/venv/bin:/opt/runtime/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/runtime/lib:${LD_LIBRARY_PATH}"
 

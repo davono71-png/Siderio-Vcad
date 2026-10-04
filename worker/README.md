@@ -63,7 +63,9 @@ docker build -f worker/Dockerfile -t siderio-vcad-worker .
 
 Su una macchina con poca RAM: `--build-arg BUILD_JOBS=2`. Le architetture si cambiano con `--build-arg CUDA_ARCHITECTURES=61,89` e la stessa lista va messa in `SIDERIO_CUDA_SMS` dentro l’immagine (è già il default).
 
-L’integrazione GitHub di RunPod ha un limite di circa 30 minuti sul solo `docker build` (la finestra totale è più lunga). Compilare COLMAP e OpenMVS con CUDA può superarlo. In quel caso si costruisce l’immagine in locale, la si pubblica su un registry e si crea l’endpoint con **Import from Docker Registry**.
+L’immagine misurata è circa **10,6 GB**: il runtime CUDA pesa circa 6 GB, l’ambiente Python (Open3D e CadQuery) circa 2,9 GB, i binari e le librerie copiate meno di 0,5 GB. Su questa macchina (4 core, `BUILD_JOBS=2`) la compilazione CUDA di COLMAP è stata circa 12 minuti e quella di OpenMVS circa 8, più il pull dell’immagine base, apt e i pacchetti Python. Un build da zero sta intorno ai **40 minuti** e può superare il limite di circa 30 minuti del solo `docker build` nell’integrazione GitHub di RunPod (la finestra totale è più lunga). Se la build su RunPod viene interrotta, costruire l’immagine in locale, pubblicarla su un registry e creare l’endpoint con **Import from Docker Registry**.
+
+`colmap -h` e `import pycolmap` partono anche senza scheda video. `DensifyPointCloud` è linkato a `libcuda.so.1`: senza il driver NVIDIA non si avvia. Su RunPod quel file lo monta il runtime della GPU.
 
 Le wheel `pycolmap-cuda12` non vanno usate al posto di questa compilazione: i cubin ufficiali sono per sm_90, sm_100 e sm_120, quindi non girano né sulla 4090 né sulla P4000.
 
