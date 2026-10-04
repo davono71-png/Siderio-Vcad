@@ -64,6 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libopencv-dev \
         libopenblas-dev \
         libopenimageio-dev \
+        openimageio-tools \
         libpng-dev \
         libsqlite3-dev \
         libssl-dev \
@@ -85,10 +86,12 @@ RUN python3 -m venv /opt/build-venv \
         pybind11==3.0.4 \
         scikit-build-core==0.11.6
 
-# Architetture CUDA come lista CMake (61;89). Il punto e virgola non sopravvive
-# a una shell non quotata, quindi l'ARG entra come elenco separato da virgole.
+# Il punto e virgola di CMake non sopravvive a una shell non quotata: l'ARG
+# entra come elenco separato da virgole (61,89) e qui diventa 61;89.
+# Le tappe sono separate così un errore su OpenMVS non ricompila COLMAP.
 RUN arch="$(printf '%s' "${CUDA_ARCHITECTURES}" | tr ',' ';')" \
     && test -n "$arch" \
+    && printf '%s\n' "$arch" > /tmp/cuda-arch.txt \
     && echo "CUDA architectures: $arch" \
     && mkdir -p /src \
     && curl -fsSL "https://github.com/CGAL/cgal/archive/refs/tags/v${CGAL_VERSION}.tar.gz" | tar -xz -C /src \
@@ -96,7 +99,9 @@ RUN arch="$(printf '%s' "${CUDA_ARCHITECTURES}" | tr ',' ';')" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
     && cmake --build /tmp/cgal-build --target install \
-    && rm -rf /tmp/cgal-build "/src/cgal-${CGAL_VERSION}" \
+    && rm -rf /tmp/cgal-build "/src/cgal-${CGAL_VERSION}"
+
+RUN arch="$(cat /tmp/cuda-arch.txt)" \
     && curl -fsSL "https://github.com/colmap/colmap/archive/refs/tags/${COLMAP_VERSION}.tar.gz" | tar -xz -C /src \
     && cmake -S "/src/colmap-${COLMAP_VERSION}" -B /tmp/colmap-build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
@@ -117,9 +122,14 @@ RUN arch="$(printf '%s' "${CUDA_ARCHITECTURES}" | tr ',' ';')" \
     && cmake --build /tmp/colmap-build -j "${BUILD_JOBS}" \
     && cmake --install /tmp/colmap-build \
     && rm -rf /tmp/colmap-build \
-    && CMAKE_PREFIX_PATH=/usr/local CMAKE_ARGS="-DGENERATE_STUBS=OFF -DCMAKE_PREFIX_PATH=/usr/local -DCCACHE_ENABLED=OFF" \
+    && test -x /usr/local/bin/colmap
+
+RUN CMAKE_PREFIX_PATH=/usr/local CMAKE_ARGS="-DGENERATE_STUBS=OFF -DCMAKE_PREFIX_PATH=/usr/local -DCCACHE_ENABLED=OFF" \
         /opt/build-venv/bin/pip install --no-build-isolation --no-deps --no-cache-dir "/src/colmap-${COLMAP_VERSION}" \
     && rm -rf "/src/colmap-${COLMAP_VERSION}" \
+    && test -d /opt/build-venv/lib/python3.12/site-packages/pycolmap
+
+RUN arch="$(cat /tmp/cuda-arch.txt)" \
     && curl -fsSL "https://github.com/cdcseacave/VCG/archive/${VCG_COMMIT}.tar.gz" | tar -xz -C /src \
     && curl -fsSL "https://github.com/cdcseacave/openMVS/archive/refs/tags/v${OPENMVS_VERSION}.tar.gz" | tar -xz -C /src \
     && cmake -S "/src/openMVS-${OPENMVS_VERSION}" -B /tmp/openmvs-build -G Ninja \
@@ -138,9 +148,7 @@ RUN arch="$(printf '%s' "${CUDA_ARCHITECTURES}" | tr ',' ';')" \
     && cmake --build /tmp/openmvs-build -j "${BUILD_JOBS}" \
     && cmake --install /tmp/openmvs-build \
     && rm -rf /tmp/openmvs-build "/src/openMVS-${OPENMVS_VERSION}" "/src/VCG-${VCG_COMMIT}" \
-    && test -x /usr/local/bin/colmap \
-    && test -x /usr/local/bin/DensifyPointCloud \
-    && test -d /opt/build-venv/lib/python3.12/site-packages/pycolmap
+    && test -x /usr/local/bin/DensifyPointCloud
 
 COPY worker/docker/collect_runtime.py /tmp/collect_runtime.py
 RUN python3 /tmp/collect_runtime.py && rm /tmp/collect_runtime.py
