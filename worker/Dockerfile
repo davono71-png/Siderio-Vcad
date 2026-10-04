@@ -158,6 +158,9 @@ RUN arch="$(cat /tmp/cuda-arch.txt)" \
         -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
     && cmake --build /tmp/openmvs-build -j "${BUILD_JOBS}" \
     && cmake --install /tmp/openmvs-build \
+    && for tool in InterfaceCOLMAP DensifyPointCloud ReconstructMesh TextureMesh; do \
+         ln -sfn "/usr/local/bin/OpenMVS/${tool}" "/usr/local/bin/${tool}"; \
+       done \
     && rm -rf /tmp/openmvs-build "/src/openMVS-${OPENMVS_VERSION}" "/src/VCG-${VCG_COMMIT}" \
     && test -x /usr/local/bin/DensifyPointCloud
 
