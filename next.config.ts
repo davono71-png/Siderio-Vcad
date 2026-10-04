@@ -2,9 +2,6 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  outputFileTracingIncludes: {
-    "/**": ["./node_modules/client-only/**/*"],
-  },
   headers: async () => [
     {
       source: "/sw.js",
@@ -18,7 +15,11 @@ const nextConfig: NextConfig = {
       headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
     },
     {
-      source: "/survey/:path*",
+      source: "/nuovo",
+      headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+    },
+    {
+      source: "/rilievo/:path*",
       headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
     },
   ],

@@ -6,15 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "check:cad": "npx tsx scripts/check-cad.ts",
     "lint": "eslint"
   },
   "dependencies": {
-    "client-only": "^0.0.1",
     "idb": "^8.0.3",
     "jszip": "^3.10.1",
     "next": "16.3.1",
-    "pdf-lib": "^1.17.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

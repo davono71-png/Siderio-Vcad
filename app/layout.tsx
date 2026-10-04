@@ -19,13 +19,13 @@ const sourceSerif = Source_Serif_4({
 export const metadata: Metadata = {
   title: "Siderio Vcad",
   description:
-    "Visualizzatore DWG/DXF: layer, campiture, quote in scala e stampa di un riquadro. Funziona senza rete.",
+    "Rilievi fotografici di stanze e facciate. Scatta, segna le quote e prepara il modello 3D. Funziona anche senza rete dopo il primo caricamento.",
   applicationName: "Siderio Vcad",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Vcad",
+    title: "Siderio",
   },
   icons: {
     icon: [
@@ -45,14 +45,9 @@ export const viewport: Viewport = {
   themeColor: "#2C2C2C",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html
-      lang="it"
-      className={`${dmSans.variable} ${sourceSerif.variable} h-full antialiased`}
-    >
+    <html lang="it" className={`${dmSans.variable} ${sourceSerif.variable} h-full antialiased`}>
       <body className="min-h-full bg-paper text-ink">
         <RegisterSW />
         {children}

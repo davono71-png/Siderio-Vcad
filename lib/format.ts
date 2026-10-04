@@ -1,44 +1,42 @@
-const DATE_FMT = new Intl.DateTimeFormat("it-IT", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-});
+import type { ProjectKind } from "./data/types";
 
-const DATE_TIME_FMT = new Intl.DateTimeFormat("it-IT", {
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-export function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return DATE_FMT.format(d);
+export function formatWhen(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("it-IT", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
-export function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return DATE_TIME_FMT.format(d);
+export function kindLabel(kind: ProjectKind) {
+  return kind === "facciata" ? "Facciata" : "Stanza";
 }
 
-export function formatPageCount(n: number): string {
-  return n === 1 ? "1 pagina" : `${n} pagine`;
+export function nextPointLabel(used: string[]) {
+  const taken = new Set(used.map((label) => label.toUpperCase()));
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  for (const letter of alphabet) {
+    if (!taken.has(letter)) return letter;
+  }
+  for (let n = 2; n < 40; n += 1) {
+    for (const letter of alphabet) {
+      const label = `${letter}${n}`;
+      if (!taken.has(label)) return label;
+    }
+  }
+  return `P${used.length + 1}`;
 }
 
-export function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+export function safeFileName(name: string) {
+  const cleaned = name
+    .trim()
+    .replace(/[^\p{L}\p{N}_-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return cleaned || "rilievo";
 }
 
-export function formatLength(mm: number, unit: "mm" | "cm" | "m" = "m"): string {
-  if (unit === "m") return `${(mm / 1000).toFixed(2)} m`;
-  if (unit === "cm") return `${(mm / 10).toFixed(1)} cm`;
-  return `${mm.toFixed(0)} mm`;
-}
-
-export function formatMm(mm: number): string {
-  if (mm >= 1000) return formatLength(mm, "m");
-  if (mm >= 10) return formatLength(mm, "cm");
-  return formatLength(mm, "mm");
+export function sequenceName(index: number) {
+  return `${String(index).padStart(3, "0")}.jpg`;
 }
