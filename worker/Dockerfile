@@ -132,6 +132,12 @@ RUN pybind11_dir="$(/opt/build-venv/bin/python -c 'import pybind11; print(pybind
     && test -d /opt/build-venv/lib/python3.12/site-packages/pycolmap
 
 RUN arch="$(cat /tmp/cuda-arch.txt)" \
+    && curl -fsSL "https://github.com/jlblancoc/nanoflann/archive/refs/tags/v1.7.1.tar.gz" | tar -xz -C /src \
+    && cmake -S /src/nanoflann-1.7.1 -B /tmp/nanoflann -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build /tmp/nanoflann --target install \
+    && rm -rf /tmp/nanoflann /src/nanoflann-1.7.1 \
     && curl -fsSL "https://github.com/cdcseacave/VCG/archive/${VCG_COMMIT}.tar.gz" | tar -xz -C /src \
     && curl -fsSL "https://github.com/cdcseacave/openMVS/archive/refs/tags/v${OPENMVS_VERSION}.tar.gz" | tar -xz -C /src \
     && cmake -S "/src/openMVS-${OPENMVS_VERSION}" -B /tmp/openmvs-build -G Ninja \
