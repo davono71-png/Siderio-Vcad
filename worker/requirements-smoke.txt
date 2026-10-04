@@ -1,0 +1,4 @@
+# Import + synthetic scale/walls test. No COLMAP, OpenMVS, CadQuery or GPU.
+numpy==2.2.6
+scipy==1.15.3
+pillow==11.2.1
