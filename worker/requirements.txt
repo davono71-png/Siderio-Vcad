@@ -6,5 +6,6 @@ pillow==11.2.1
 open3d==0.19.0
 cadquery==2.5.2
 trimesh==4.9.0
-boto3==1.38.27
+# runpod 1.12 requires boto3>=1.43.66
+boto3==1.43.108
 runpod==1.12.0
