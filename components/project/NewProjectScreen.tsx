@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { getRepository } from "@/lib/data";
 import type { ProjectKind } from "@/lib/data/types";
 import { PageHeader } from "../ui/PageHeader";
+import { Toast } from "../ui/Toast";
 
 export function NewProjectScreen() {
   const router = useRouter();
@@ -23,8 +24,16 @@ export function NewProjectScreen() {
     setBusy(true);
     setError(null);
     try {
+      // Local only: never wait on R2, presign, or /api/storage/health.
       const project = await getRepository().createProject({ name, kind, notes });
-      router.push(`/rilievo/${project.id}`);
+      const href = `/rilievo/${project.id}`;
+      router.push(href);
+      window.setTimeout(() => {
+        if (!window.location.pathname.endsWith("/nuovo")) return;
+        // Router navigation can stall on a stale service worker. A full load still leaves the page.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+        window.location.assign(href);
+      }, 1500);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Creazione non riuscita.");
       setBusy(false);
@@ -69,11 +78,11 @@ export function NewProjectScreen() {
             placeholder="Piano, commessa, cosa misurare…"
           />
         </label>
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
         <button type="submit" className="btn-primary bg-accent text-ink" disabled={busy}>
-          Crea rilievo
+          {busy ? "Creazione…" : "Crea rilievo"}
         </button>
       </form>
+      {error ? <Toast message={error} onDismiss={() => setError(null)} /> : null}
     </div>
   );
 }

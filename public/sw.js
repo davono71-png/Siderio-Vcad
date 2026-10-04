@@ -1,4 +1,4 @@
-const CACHE = "siderio-vcad-v5";
+const CACHE = "siderio-vcad-v6";
 const PRECACHE = [
   "/",
   "/manifest.webmanifest",
@@ -23,7 +23,11 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim()),
+      .then(() => self.clients.claim())
+      .then(async () => {
+        const clients = await self.clients.matchAll({ type: "window" });
+        for (const client of clients) client.postMessage({ type: "sw-activated" });
+      }),
   );
 });
 

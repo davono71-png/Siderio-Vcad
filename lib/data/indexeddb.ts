@@ -59,14 +59,71 @@ interface RilievoDb extends DBSchema {
   };
 }
 
+const BLOCKED_MESSAGE =
+  "L’archivio è aperto in un’altra scheda di Siderio. Chiudi le altre schede o finestre dell’app e riprova.";
+
+/** How long to wait after `blocked` before giving up. A refresh closes the old page within this window. */
+const BLOCKED_GRACE_MS = 2500;
+/** Safety net when the open itself never settles (slow phone or a connection that never closes). */
+const OPEN_LIMIT_MS = 20000;
+
 let dbPromise: Promise<IDBPDatabase<RilievoDb>> | null = null;
+let held: IDBPDatabase<RilievoDb> | null = null;
+let lifecycleBound = false;
+
+function bindLifecycle() {
+  if (lifecycleBound || typeof window === "undefined") return;
+  lifecycleBound = true;
+  window.addEventListener("pagehide", () => {
+    held?.close();
+    held = null;
+    dbPromise = null;
+  });
+}
+
+function closeNative(event: IDBVersionChangeEvent) {
+  const target = event.target;
+  if (target && "close" in target && typeof target.close === "function") {
+    try {
+      target.close();
+    } catch {
+      /* already closing */
+    }
+  }
+}
 
 function db() {
   if (typeof indexedDB === "undefined") {
     return Promise.reject(new Error("IndexedDB non è disponibile in questo browser."));
   }
-  if (!dbPromise) {
-    dbPromise = openDB<RilievoDb>(DB_NAME, DB_VERSION, {
+  bindLifecycle();
+  if (!dbPromise) dbPromise = openDatabase();
+  return dbPromise;
+}
+
+function openDatabase() {
+  let settled = false;
+  let blockedTimer: number | null = null;
+  let limitTimer: number | null = null;
+
+  const clearTimers = () => {
+    if (blockedTimer != null) window.clearTimeout(blockedTimer);
+    if (limitTimer != null) window.clearTimeout(limitTimer);
+    blockedTimer = null;
+    limitTimer = null;
+  };
+
+  return new Promise<IDBPDatabase<RilievoDb>>((resolve, reject) => {
+    const giveUp = () => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      dbPromise = null;
+      void opened.then((database) => database.close()).catch(() => undefined);
+      reject(new Error(BLOCKED_MESSAGE));
+    };
+
+    const opened = openDB<RilievoDb>(DB_NAME, DB_VERSION, {
       upgrade(database, oldVersion) {
         if (oldVersion < 1) {
           const projects = database.createObjectStore("projects", { keyPath: "id" });
@@ -86,17 +143,53 @@ function db() {
           const measurements = database.createObjectStore("measurements", { keyPath: "id" });
           measurements.createIndex("by-project", "projectId");
         }
-        if (oldVersion < 2) {
+        if (oldVersion < 2 && !database.objectStoreNames.contains("uploads")) {
           const uploads = database.createObjectStore("uploads", { keyPath: "id" });
           uploads.createIndex("by-project", "projectId");
         }
       },
-    }).catch((error: unknown) => {
-      dbPromise = null;
-      throw error instanceof Error ? error : new Error("Impossibile aprire l’archivio locale.");
+      blocked() {
+        if (settled || blockedTimer != null) return;
+        blockedTimer = window.setTimeout(giveUp, BLOCKED_GRACE_MS);
+      },
+      blocking(_current, _blocked, event) {
+        closeNative(event);
+        held?.close();
+        held = null;
+        dbPromise = null;
+      },
+      terminated() {
+        held = null;
+        dbPromise = null;
+      },
     });
-  }
-  return dbPromise;
+
+    limitTimer = window.setTimeout(giveUp, OPEN_LIMIT_MS);
+
+    opened.then(
+      (database) => {
+        if (settled) {
+          database.close();
+          return;
+        }
+        settled = true;
+        clearTimers();
+        held = database;
+        database.onclose = () => {
+          if (held === database) held = null;
+          if (dbPromise) dbPromise = null;
+        };
+        resolve(database);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimers();
+        dbPromise = null;
+        reject(error instanceof Error ? error : new Error("Impossibile aprire l’archivio locale."));
+      },
+    );
+  });
 }
 
 function bySequence(a: PhotoMeta, b: PhotoMeta) {

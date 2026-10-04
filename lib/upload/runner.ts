@@ -24,7 +24,8 @@ export function startUploader() {
   window.addEventListener("online", () => {
     void getRepository()
       .expeditePending()
-      .then(() => kick());
+      .then(() => kick())
+      .catch(() => undefined);
   });
   window.addEventListener("offline", () => emit());
   document.addEventListener("visibilitychange", () => {
@@ -32,7 +33,8 @@ export function startUploader() {
   });
   void getRepository()
     .resetStaleClaims(90_000)
-    .then(() => kick());
+    .then(() => kick())
+    .catch(() => undefined);
   window.setInterval(() => kick(), 4000);
 }
 

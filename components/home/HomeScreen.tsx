@@ -6,6 +6,7 @@ import { Logo } from "@/components/brand/Logo";
 import { getRepository } from "@/lib/data";
 import type { Project } from "@/lib/data/types";
 import { formatWhen, kindLabel } from "@/lib/format";
+import { Toast } from "../ui/Toast";
 
 type Card = Project & { photos: number };
 
@@ -45,9 +46,8 @@ export function HomeScreen() {
         Fotografa una stanza o una facciata. Le foto restano sul telefono, pronte per il modello 3D.
       </p>
 
-      {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}
-
-      {projects == null ? <p className="mt-8 text-sm text-steel">Caricamento…</p> : null}
+      {error ? <Toast message={error} /> : null}
+      {projects == null && !error ? <p className="mt-8 text-sm text-steel">Caricamento…</p> : null}
 
       {projects?.length === 0 ? (
         <div className="notebook-card mt-8 p-5">
