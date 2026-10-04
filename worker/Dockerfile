@@ -124,8 +124,10 @@ RUN arch="$(cat /tmp/cuda-arch.txt)" \
     && rm -rf /tmp/colmap-build \
     && test -x /usr/local/bin/colmap
 
-RUN CMAKE_PREFIX_PATH=/usr/local CMAKE_ARGS="-DGENERATE_STUBS=OFF -DCMAKE_PREFIX_PATH=/usr/local -DCCACHE_ENABLED=OFF" \
-        /opt/build-venv/bin/pip install --no-build-isolation --no-deps --no-cache-dir "/src/colmap-${COLMAP_VERSION}" \
+RUN pybind11_dir="$(/opt/build-venv/bin/python -c 'import pybind11; print(pybind11.get_cmake_dir())')" \
+    && CMAKE_PREFIX_PATH="/usr/local:${pybind11_dir}" \
+       CMAKE_ARGS="-DGENERATE_STUBS=OFF -Dpybind11_DIR=${pybind11_dir} -DCMAKE_PREFIX_PATH=/usr/local -DCCACHE_ENABLED=OFF" \
+       /opt/build-venv/bin/pip install --no-build-isolation --no-deps --no-cache-dir "/src/colmap-${COLMAP_VERSION}" \
     && rm -rf "/src/colmap-${COLMAP_VERSION}" \
     && test -d /opt/build-venv/lib/python3.12/site-packages/pycolmap
 
