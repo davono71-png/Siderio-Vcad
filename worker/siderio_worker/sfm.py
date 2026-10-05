@@ -81,7 +81,8 @@ def _camera_params(model: str, width: int, height: int, focal: float) -> str:
 
 
 def _summary(reconstruction, names: list[str]) -> dict:
-    registered = sorted(image.name for image in reconstruction.images.values() if image.has_pose())
+    # Image.has_pose and Image.num_points3D are properties. Reconstruction.num_points3D() stays a method.
+    registered = sorted(image.name for image in reconstruction.images.values() if image.has_pose)
     missing = sorted(set(names) - set(registered))
     return {
         "registered": int(reconstruction.num_reg_images()),
@@ -93,7 +94,7 @@ def _summary(reconstruction, names: list[str]) -> dict:
     }
 
 
-def run_sfm(work_dir: str, rows: list[dict], device: str, max_features: int, seeds: int, threads: int, log=print) -> dict:
+def run_sfm(work_dir: str, rows: list[dict], device: str, max_features: int, seeds: int, threads: int, log=print, on_stage=None) -> dict:
     import pycolmap
 
     pycolmap.set_random_seed(0)
@@ -125,6 +126,8 @@ def run_sfm(work_dir: str, rows: list[dict], device: str, max_features: int, see
     reader.camera_params = _camera_params(model, width, height, focal)
     mode = pycolmap.CameraMode.SINGLE if same_size else pycolmap.CameraMode.PER_IMAGE
     dev = _device(pycolmap, device)
+    if on_stage:
+        on_stage("features", f"Estraggo le feature SIFT ({device})")
     log(f"SIFT device={device} camera={'SINGLE' if same_size else 'PER_IMAGE'} focal_px={focal:.1f} prior={prior}")
     try:
         pycolmap.extract_features(
@@ -156,6 +159,8 @@ def run_sfm(work_dir: str, rows: list[dict], device: str, max_features: int, see
             camera.has_prior_focal_length = True
             db.update_camera(camera)
         db.close()
+    if on_stage:
+        on_stage("match", "Abbino le feature")
     matching = pycolmap.FeatureMatchingOptions()
     matching.num_threads = threads
     matching.guided_matching = True
@@ -170,6 +175,8 @@ def run_sfm(work_dir: str, rows: list[dict], device: str, max_features: int, see
         device = "cpu"
         pycolmap.match_exhaustive(database, matching_options=matching, verification_options=verify, device=pycolmap.Device.cpu)
 
+    if on_stage:
+        on_stage("map", "Oriento le foto")
     best = None
     for seed in range(int(seeds)):
         tmp = os.path.join(work_dir, f"sparse_seed{seed}")
@@ -271,9 +278,9 @@ def write_dense_subset(sparse_dir: str, dest_dir: str, weak_names: set[str], log
     rec = pycolmap.Reconstruction(sparse_dir)
     dropped = 0
     for image in list(rec.images.values()):
-        weak_count = image.has_pose() and image.num_points3D() < 15
+        weak_count = image.has_pose and image.num_points3D < 15
         if image.name in weak_names or weak_count:
-            if image.has_pose():
+            if image.has_pose:
                 log(f"escludo {image.name} dalla mesh densa")
                 rec.deregister_frame(image.frame_id)
                 dropped += 1
@@ -298,7 +305,7 @@ def pose_check(project: dict, sparse_dir: str, rows: list[dict]) -> dict:
     names, colmap_dirs, phone_dirs = [], [], []
     for image in rec.images.values():
         photo_id = id_of.get(image.name)
-        if photo_id not in by_file or not image.has_pose():
+        if photo_id not in by_file or not image.has_pose:
             continue
         rotation = np.asarray(image.cam_from_world().rotation.matrix(), float)
         names.append(image.name)
@@ -346,7 +353,7 @@ def image_up_prior(sparse_dir: str):
     rec = pycolmap.Reconstruction(sparse_dir)
     rows = []
     for image in rec.images.values():
-        if not image.has_pose():
+        if not image.has_pose:
             continue
         rotation = np.asarray(image.cam_from_world().rotation.matrix(), float)
         rows.append(-rotation[1, :])

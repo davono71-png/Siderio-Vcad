@@ -248,7 +248,7 @@ def rays_from_reconstruction(reconstruction, rows_by_photo: dict):
         if row is None:
             return None
         image = by_name.get(row["name"])
-        if image is None or not image.has_pose():
+        if image is None or not image.has_pose:
             return None
         factor = float(row["factor"])
         camera = reconstruction.cameras[image.camera_id]

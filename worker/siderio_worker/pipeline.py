@@ -45,7 +45,12 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
         device, why = sfm.resolve_device(options.device)
         print(f"[device] {device} ({why})", flush=True)
         stage = "features"
-        status.update(stage, 12, f"Estraggo le feature SIFT ({device})", timings)
+
+        def _sfm_stage(name, message, _progress={"features": 12, "match": 30, "map": 42}):
+            nonlocal stage
+            stage = name
+            status.update(name, _progress.get(name, 20), message, timings)
+
         t0 = time.perf_counter()
         sfm_info = sfm.run_sfm(
             work,
@@ -55,6 +60,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
             options.seeds,
             options.thread_count(),
             log=lambda msg: print(f"[sfm] {msg}", flush=True),
+            on_stage=_sfm_stage,
         )
         timings["sfm"] = time.perf_counter() - t0
         status.update("map", 50, f"Registrate {sfm_info['registered']}/{sfm_info['total']} foto", timings)
@@ -161,7 +167,8 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
         summary["status"] = r2.result_key(project_id, "status.json") if upload else os.path.join(out_dir, "status.json")
         return summary
     except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
+        text = str(exc).strip()
+        message = f"{exc.__class__.__name__}: {text}" if text else exc.__class__.__name__
         print(f"[pipeline] errore in {stage}: {message}", flush=True)
         traceback.print_exc()
         status.fail(message, stage=stage)
@@ -263,7 +270,7 @@ def _weak_images(sparse_dir: str, pose: dict) -> set[str]:
     import pycolmap
 
     rec = pycolmap.Reconstruction(sparse_dir)
-    counts = {image.name: image.num_points3D() for image in rec.images.values() if image.has_pose()}
+    counts = {image.name: image.num_points3D for image in rec.images.values() if image.has_pose}
     weak = {name for name, count in counts.items() if count < 15}
     for name, info in (pose.get("perImage") or {}).items():
         elev = abs(float(info["elevSfm"]) - float(info["elevPhone"]))
@@ -277,7 +284,7 @@ def _camera_centres(sparse_dir: str):
     import pycolmap
 
     rec = pycolmap.Reconstruction(sparse_dir)
-    centres = [np.asarray(image.projection_center(), float) for image in rec.images.values() if image.has_pose()]
+    centres = [np.asarray(image.projection_center(), float) for image in rec.images.values() if image.has_pose]
     if not centres:
         raise PipelineError("planes", "Nessuna foto registrata per orientare le normali.")
     return np.vstack(centres)
