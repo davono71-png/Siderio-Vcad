@@ -148,8 +148,13 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 write_previews(out_dir, room_mm)
         diagnostic = _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options)
         if mvs_dir and os.path.isfile(os.path.join(out_dir, "room.json")):
-            diagnostic["room"] = json.load(open(os.path.join(out_dir, "room.json"), encoding="utf-8"))["dims"]
-            diagnostic["wallNotes"] = json.load(open(os.path.join(work, "room_model.json"), encoding="utf-8"))["detection"]["walls"]
+            with open(os.path.join(out_dir, "room.json"), encoding="utf-8") as handle:
+                diagnostic["room"] = json.load(handle)["dims"]
+            with open(os.path.join(work, "room_model.json"), encoding="utf-8") as handle:
+                detection = json.load(handle)["detection"]
+            diagnostic["wallNotes"] = detection["walls"]
+            diagnostic["floorMethod"] = detection.get("floorMethod")
+            diagnostic["ceilingMethod"] = detection.get("ceilingMethod")
         _write_json(os.path.join(out_dir, "diagnostic.json"), diagnostic)
         outputs = _output_keys(project_id, out_dir) if upload else {name: name for name in _present(out_dir)}
         if upload:

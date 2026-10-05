@@ -94,6 +94,84 @@ def check_walls():
     mm = room.to_millimetres(detected, 1.0)
     assert mm["units"] == "mm"
     assert abs(mm["dims"]["length_x"] - length) < 1
+    assert detected["detection"]["floorMethod"] == "plane"
+    assert detected["detection"]["ceilingMethod"] == "plane"
+    assert mm["detection"]["floorMethod"] == "plane"
+
+
+def _box(rng, *, with_floor=True, with_ceiling=True, wall_top=2700.0, ceiling_z=2700.0, patch=False):
+    """Axis-aligned room. Floor and ceiling can be omitted or reduced to a patch."""
+    parts = []
+    floor_pts, floor_n = _grid(np.array([0, 0, 0.0]), np.array([4000, 0, 0]), np.array([0, 3000, 0]), 40, 30, [0, 0, 1], rng=rng)
+    if not with_floor:
+        floor_n = np.repeat([[1.0, 0.0, 0.0]], len(floor_pts), axis=0)
+    parts.append((floor_pts, floor_n))
+    if with_ceiling and not patch:
+        parts.append(_grid(np.array([0, 0, ceiling_z]), np.array([4000, 0, 0]), np.array([0, 3000, 0]), 36, 28, [0, 0, -1], rng=rng))
+    if patch:
+        parts.append(_grid(np.array([1800, 1300, ceiling_z]), np.array([400, 0, 0]), np.array([0, 400, 0]), 8, 6, [0, 0, -1], noise=2, rng=rng))
+    parts.append(_grid(np.array([0, 0, 0.0]), np.array([0, 3000, 0]), np.array([0, 0, wall_top]), 24, 20, [1, 0, 0], rng=rng))
+    parts.append(_grid(np.array([4000, 0, 0.0]), np.array([0, 3000, 0]), np.array([0, 0, wall_top]), 24, 20, [-1, 0, 0], rng=rng))
+    parts.append(_grid(np.array([0, 0, 0.0]), np.array([4000, 0, 0]), np.array([0, 0, wall_top]), 32, 20, [0, 1, 0], rng=rng))
+    parts.append(_grid(np.array([0, 3000, 0.0]), np.array([4000, 0, 0]), np.array([0, 0, wall_top]), 32, 20, [0, -1, 0], rng=rng))
+    points = np.vstack([p for p, _ in parts])
+    normals = np.vstack([n for _, n in parts])
+    return points, normals
+
+
+def _detect_box(points, normals, cameras):
+    return room.detect_room(points, normals, cameras, mm_per_unit=1.0, up_prior=np.array([0.0, 0.0, 1.0]))
+
+
+def check_ceiling_fallbacks():
+    rng = np.random.default_rng(2)
+    cams = np.array([[2000.0, 1500.0, 1500.0]])
+    sparse, sparse_n = _box(rng, with_ceiling=False, wall_top=2700.0)
+    detected = _detect_box(sparse, sparse_n, cams)
+    assert detected["detection"]["floorMethod"] == "plane"
+    assert detected["detection"]["ceilingMethod"] == "fallback-percentile", detected["detection"]["ceilingMethod"]
+    assert 2200 < detected["dims"]["height_z"] < 2800, detected["dims"]
+    assert abs(detected["dims"]["length_x"] - 4000) < 200
+
+    short, short_n = _box(rng, with_ceiling=False, wall_top=1400.0)
+    phone = np.array([[2000.0, 1500.0, 1600.0]])
+    detected = _detect_box(short, short_n, phone)
+    assert detected["detection"]["ceilingMethod"] == "fallback-cameras", detected["detection"]["ceilingMethod"]
+    assert abs(detected["dims"]["height_z"] - 1800) < 40, detected["dims"]["height_z"]
+
+    partial, partial_n = _box(rng, with_ceiling=False, patch=True, ceiling_z=2700.0)
+    detected = _detect_box(partial, partial_n, cams)
+    assert detected["detection"]["ceilingMethod"] == "fallback-peak", detected["detection"]["ceilingMethod"]
+    assert abs(detected["dims"]["height_z"] - 2700) < 80, detected["dims"]["height_z"]
+
+    # A downward patch on a low piece of furniture is not a ceiling.
+    low_patch, low_patch_n = _box(rng, with_ceiling=False, patch=True, ceiling_z=400.0, wall_top=2700.0)
+    detected = _detect_box(low_patch, low_patch_n, cams)
+    assert detected["detection"]["ceilingMethod"] == "fallback-percentile", detected["detection"]["ceilingMethod"]
+    assert 2200 < detected["dims"]["height_z"] < 2800, detected["dims"]
+
+    no_floor, no_floor_n = _box(rng, with_floor=False, ceiling_z=2700.0)
+    detected = _detect_box(no_floor, no_floor_n, cams)
+    assert detected["detection"]["ceilingMethod"] == "plane"
+    assert detected["detection"]["floorMethod"] == "fallback-percentile", detected["detection"]["floorMethod"]
+    assert 2400 < detected["dims"]["height_z"] < 2900, detected["dims"]
+
+    tall, tall_n = _box(rng, ceiling_z=6000.0, wall_top=6000.0)
+    try:
+        _detect_box(tall, tall_n, cams)
+    except RuntimeError as exc:
+        assert "abbastanza estesi" in str(exc)
+    else:
+        raise AssertionError("a 6 m ceiling should be rejected")
+
+    low, low_n = _box(rng, ceiling_z=500.0, wall_top=500.0)
+    inside = np.array([[2000.0, 1500.0, 250.0]])
+    try:
+        _detect_box(low, low_n, inside)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("a 0.5 m room should be rejected")
 
 
 def _pinhole(centre, uv, f=500.0, principal=(320.0, 240.0)):
@@ -187,6 +265,7 @@ def main():
     check_imports_and_options()
     check_scale()
     check_walls()
+    check_ceiling_fallbacks()
     check_step()
     print("smoke ok")
 

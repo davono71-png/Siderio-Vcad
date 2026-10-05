@@ -121,40 +121,88 @@ def _extent_ok(xy: np.ndarray, scene_min, scene_max, frac=0.28) -> bool:
     return bool(np.all(width >= frac * span))
 
 
-def _floor_ceiling(points, normals, mm_per_unit, span):
+def _height_ok(low, high, mm_per_unit, span) -> bool:
+    gap = float(high) - float(low)
+    return _mu(800, mm_per_unit, span) < gap <= _mu(5000, mm_per_unit, span)
+
+
+def _surface_candidates(points, normals, sign, mm_per_unit, span, cos, min_count):
     scene_min = np.percentile(points[:, :2], 5, axis=0)
     scene_max = np.percentile(points[:, :2], 95, axis=0)
     bin_w = _mu(40, mm_per_unit, span)
+    mask = normals[:, 2] * sign > cos
+    out = []
+    for peak in _peaks(points[mask, 2], bin_w, min_count):
+        sel = mask & (np.abs(points[:, 2] - peak["pos"]) < _mu(50, mm_per_unit, span))
+        xy = points[sel, :2]
+        out.append(
+            {
+                "pos": peak["pos"],
+                "support": int(sel.sum()),
+                "large": _extent_ok(xy, scene_min, scene_max),
+            }
+        )
+    return out
 
-    def collect(sign):
-        mask = normals[:, 2] * sign > 0.82
-        out = []
-        for peak in _peaks(points[mask, 2], bin_w, 25):
-            sel = mask & (np.abs(points[:, 2] - peak["pos"]) < _mu(50, mm_per_unit, span))
-            xy = points[sel, :2]
-            out.append(
-                {
-                    "pos": peak["pos"],
-                    "support": int(sel.sum()),
-                    "large": _extent_ok(xy, scene_min, scene_max),
-                }
-            )
-        return out
 
-    floors = collect(+1)
-    ceilings = collect(-1)
-    large_f = [c for c in floors if c["large"]] or floors
-    large_c = [c for c in ceilings if c["large"]] or ceilings
-    if not large_f or not large_c:
+def _prefer_plane(candidates, want_low):
+    """Large plane if one exists, otherwise the outermost peak."""
+    if not candidates:
+        return None, None
+    large = [c for c in candidates if c["large"]]
+    pool = large or candidates
+    chosen = min(pool, key=lambda c: c["pos"]) if want_low else max(pool, key=lambda c: c["pos"])
+    return float(chosen["pos"]), ("plane" if chosen["large"] else "fallback-peak")
+
+
+def _fallback_level(points, cameras, anchor, want_high, mm_per_unit, span):
+    """Percentile of the cloud, then camera centres. Both must leave a real room height."""
+    percentile = 98.0 if want_high else 2.0
+    z = float(np.percentile(points[:, 2], percentile))
+    if want_high:
+        far_enough = (z - anchor) >= _mu(2000, mm_per_unit, span)
+        plausible = _height_ok(anchor, z, mm_per_unit, span)
+    else:
+        far_enough = (anchor - z) >= _mu(2000, mm_per_unit, span)
+        plausible = _height_ok(z, anchor, mm_per_unit, span)
+    if far_enough and plausible:
+        return z, "fallback-percentile"
+    if cameras is not None and len(cameras):
+        margin = _mu(200, mm_per_unit, span)
+        z = float(np.max(cameras[:, 2]) + margin) if want_high else float(np.min(cameras[:, 2]) - margin)
+        plausible = _height_ok(anchor, z, mm_per_unit, span) if want_high else _height_ok(z, anchor, mm_per_unit, span)
+        if plausible:
+            return z, "fallback-cameras"
+    return None, None
+
+
+def _floor_ceiling(points, normals, cameras, mm_per_unit, span):
+    # Strict peaks first. A phone that barely sees the ceiling has too few
+    # downward normals for that pass, so a looser one still counts as a peak.
+    floors = _surface_candidates(points, normals, +1, mm_per_unit, span, 0.82, 25)
+    ceilings = _surface_candidates(points, normals, -1, mm_per_unit, span, 0.82, 25)
+    floors_loose = _surface_candidates(points, normals, +1, mm_per_unit, span, 0.55, 8)
+    ceilings_loose = _surface_candidates(points, normals, -1, mm_per_unit, span, 0.55, 8)
+    floor, floor_method = _prefer_plane(floors, want_low=True)
+    ceiling, ceiling_method = _prefer_plane(ceilings, want_low=False)
+    if floor is None:
+        floor, floor_method = _prefer_plane(floors_loose, want_low=True)
+    if ceiling is None:
+        ceiling, ceiling_method = _prefer_plane(ceilings_loose, want_low=False)
+    # A small downward patch under a piece of furniture is not a ceiling.
+    # Drop it and try the cloud height, then the cameras.
+    if floor is not None and ceiling is not None and not _height_ok(floor, ceiling, mm_per_unit, span):
+        if floor_method != "plane":
+            floor, floor_method = None, None
+        if ceiling_method != "plane":
+            ceiling, ceiling_method = None, None
+    if floor is not None and ceiling is None:
+        ceiling, ceiling_method = _fallback_level(points, cameras, floor, True, mm_per_unit, span)
+    elif ceiling is not None and floor is None:
+        floor, floor_method = _fallback_level(points, cameras, ceiling, False, mm_per_unit, span)
+    if floor is None or ceiling is None or not _height_ok(floor, ceiling, mm_per_unit, span):
         raise RuntimeError("Non trovo un pavimento e un soffitto abbastanza estesi.")
-    # Lowest large upward plane, highest large downward plane. A table is
-    # upward but small, so it loses to the floor; if every candidate is small
-    # we still take the extreme one rather than a mid-height surface.
-    floor = min(large_f, key=lambda c: c["pos"])["pos"]
-    ceiling = max(large_c, key=lambda c: c["pos"])["pos"]
-    if ceiling - floor <= _mu(800, mm_per_unit, span):
-        raise RuntimeError("Pavimento e soffitto sono troppo vicini per essere una stanza.")
-    return float(floor), float(ceiling), floors, ceilings
+    return float(floor), float(ceiling), floor_method, ceiling_method, floors or floors_loose, ceilings or ceilings_loose
 
 
 def _shell_edge(xy, axis, want_min, orth_span, cell, cover=0.34):
@@ -392,11 +440,15 @@ def detect_room(points, normals, cameras=None, mm_per_unit=None, overrides=None,
     Q = frame["points"]
     NQ = frame["normals"]
     span = float(np.linalg.norm(np.percentile(Q, 95, axis=0) - np.percentile(Q, 5, axis=0)))
-    floor, ceiling, floor_cands, ceil_cands = _floor_ceiling(Q, NQ, mm_per_unit, span)
+    floor, ceiling, floor_method, ceiling_method, floor_cands, ceil_cands = _floor_ceiling(
+        Q, NQ, frame["cameras"], mm_per_unit, span
+    )
     if "floor" in overrides:
         floor = float(overrides["floor"])
+        floor_method = "override"
     if "ceiling" in overrides:
         ceiling = float(overrides["ceiling"])
+        ceiling_method = "override"
     footprint = _footprint(Q, NQ, floor, ceiling, mm_per_unit, span)
     notes = {}
     for key, axis, want_min in (("xmin", 0, True), ("xmax", 0, False), ("ymin", 1, True), ("ymax", 1, False)):
@@ -467,6 +519,8 @@ def detect_room(points, normals, cameras=None, mm_per_unit=None, overrides=None,
             "raw_planes": {"floor": floor, "ceiling": ceiling, **{k: footprint[k] for k in ("xmin", "xmax", "ymin", "ymax")}},
             "overrides": overrides,
             "walls": notes,
+            "floorMethod": floor_method,
+            "ceilingMethod": ceiling_method,
             "floor_candidates": floor_cands,
             "ceiling_candidates": ceil_cands,
             "n_points_used": int(len(Q)),
