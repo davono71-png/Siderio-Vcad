@@ -497,6 +497,7 @@ def detect_room(points, normals, cameras=None, mm_per_unit=None, overrides=None,
     up_angle = float(np.degrees(np.arccos(np.clip(abs(frame["up"] @ frame["up_prior"]), -1, 1))))
     return {
         "units": "model",
+        "mode": "stanza",
         "mm_per_unit": mm_per_unit,
         "transform_colmap_to_room": transform.tolist(),
         "convention": "Z up, floor Z=0, interior [0,Lx]x[0,Ly]x[0,H]; S=y0 N=y=Ly W=x0 E=x=Lx",
@@ -547,6 +548,7 @@ def to_millimetres(room: dict, mm_per_unit: float) -> dict:
         walls[name] = {"length": round(float(wall["length"]) * s, 1), "plane": wall["plane"]}
     return {
         "units": "mm",
+        "mode": room.get("mode", "stanza"),
         "mm_per_unit": s,
         "convention": "Z su, pavimento Z=0, interno [0,Lx] x [0,Ly] x [0,H] in millimetri. S=y0, N=y=Ly, W=x0, E=x=Lx.",
         "dims": {

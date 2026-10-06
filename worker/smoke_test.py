@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from siderio_worker import export_mesh, openmvs, options, pipeline, prep, previews, r2, room, scale, sfm, status, walls  # noqa: E402
+from siderio_worker import export_mesh, facade, openmvs, options, pipeline, prep, previews, r2, room, scale, sfm, status, walls  # noqa: E402
 import handler  # noqa: E402
 import test_local  # noqa: E402
 
@@ -96,6 +96,8 @@ def check_walls():
     assert abs(mm["dims"]["length_x"] - length) < 1
     assert detected["detection"]["floorMethod"] == "plane"
     assert detected["detection"]["ceilingMethod"] == "plane"
+    assert detected["mode"] == "stanza"
+    assert mm["mode"] == "stanza"
     assert mm["detection"]["floorMethod"] == "plane"
 
 
@@ -231,15 +233,127 @@ def check_scale():
     assert abs(residual).sum() > 0
 
 
+def _span(plane, axis):
+    origin = np.asarray(plane["originMm"], float)
+    along_u = np.asarray(plane["axisU"], float) * float(plane["widthMm"])
+    along_v = np.asarray(plane["axisV"], float) * float(plane["heightMm"])
+    corners = [origin, origin + along_u, origin + along_v, origin + along_u + along_v]
+    values = [float(corner[axis]) for corner in corners]
+    return min(values), max(values)
+
+
+def synthetic_facade(rng):
+    """Wall, desk top and monitor. No floor and no ceiling."""
+    parts = []
+    parts.append(_grid(np.array([0, 0, 0.0]), np.array([2000, 0, 0]), np.array([0, 0, 1600]), 70, 56, [0, 1, 0], rng=rng))
+    parts.append(_grid(np.array([300, 0, 740.0]), np.array([1200, 0, 0]), np.array([0, 700, 0]), 36, 22, [0, 0, 1], rng=rng))
+    parts.append(_grid(np.array([700, 180, 860.0]), np.array([450, 0, 0]), np.array([0, 0, 420]), 16, 14, [0, 1, 0], noise=2, rng=rng))
+    parts.append(_grid(np.array([80, 90, 180.0]), np.array([40, 0, 0]), np.array([0, 30, 0]), 6, 5, [0, 1, 0], noise=1, rng=rng))
+    points = np.vstack([item[0] for item in parts])
+    normals = np.vstack([item[1] for item in parts])
+    cameras = np.array([[1000.0, 1500.0, 1100.0], [600.0, 1400.0, 1000.0], [1400.0, 1600.0, 1200.0]])
+    return points, normals, cameras
+
+
+def check_facade():
+    rng = np.random.default_rng(3)
+    points, normals, cameras = synthetic_facade(rng)
+    detected = facade.detect_facade(
+        points,
+        normals,
+        cameras,
+        mm_per_unit=1.0,
+        up_prior=np.array([0.0, 0.0, 1.0]),
+        wall_thickness_mm=150.0,
+    )
+    scene = facade.to_millimetres(detected, 1.0)
+    assert scene["mode"] == "facciata"
+    background = [plane for plane in scene["planes"] if plane["role"] == "background"]
+    assert len(background) == 1, scene["planes"]
+    wall = background[0]
+    assert wall["type"] == "facciata"
+    assert abs(wall["widthMm"] - 2000) < 160, wall
+    assert abs(wall["heightMm"] - 1600) < 160, wall
+    assert wall["thicknessMm"] == 150.0
+    assert wall["thicknessSource"] == "parete"
+    assert abs(wall["normal"][2] - 1) < 1e-6
+    horizontal = [plane for plane in scene["planes"] if plane["type"] == "orizzontale"]
+    vertical = [plane for plane in scene["planes"] if plane["type"] == "verticale"]
+    assert len(horizontal) == 1, scene["note"]
+    assert len(vertical) == 1, scene["planes"]
+    desk = horizontal[0]
+    desk_x = _span(desk, 0)
+    desk_z = _span(desk, 2)
+    desk_y = _span(desk, 1)
+    assert abs((desk_x[1] - desk_x[0]) - 1200) < 160, desk
+    assert abs((desk_z[1] - desk_z[0]) - 700) < 160, desk
+    assert abs(desk_y[0] - 740) < 40 and abs(desk_y[1] - 740) < 40, desk
+    assert desk["thicknessMm"] == 20.0
+    assert desk["thicknessSource"] == "nominale"
+    monitor = vertical[0]
+    assert abs((_span(monitor, 0)[1] - _span(monitor, 0)[0]) - 450) < 120, monitor
+    assert abs((_span(monitor, 1)[1] - _span(monitor, 1)[0]) - 420) < 120, monitor
+    assert abs(_span(monitor, 2)[0] - 180) < 40, monitor
+    assert monitor["thicknessMm"] == 20.0
+    assert any(item["reason"] == "estensione insufficiente" for item in scene["skipped"]), scene["skipped"]
+    assert "Piano di fondo" in scene["note"]
+    # The same cloud is not a room: facciata must not invent a floor.
+    assert "floorMethod" not in scene
+
+    wall_only, wall_normals, _ = synthetic_facade(rng)
+    # Keep the wall. The patch at y=90 and the monitor at y=180 stay out.
+    keep = (wall_normals[:, 1] > 0.5) & (wall_only[:, 1] < 30)
+    alone = facade.detect_facade(wall_only[keep], wall_normals[keep], cameras, mm_per_unit=1.0, up_prior=np.array([0.0, 0.0, 1.0]))
+    assert len(alone["planes"]) == 1
+    assert alone["planes"][0]["role"] == "background"
+    assert alone["note"].startswith("Solo il piano di fondo")
+
+    # More points on the desk than on the wall, camera above looking down.
+    # The background stays the wall.
+    dense_desk = [
+        _grid(np.array([0, 0, 0.0]), np.array([2000, 0, 0]), np.array([0, 0, 1600]), 24, 18, [0, 1, 0], rng=rng),
+        _grid(np.array([200, 0, 740.0]), np.array([1400, 0, 0]), np.array([0, 800, 0]), 50, 40, [0, 0, 1], rng=rng),
+    ]
+    desk_points = np.vstack([item[0] for item in dense_desk])
+    desk_normals = np.vstack([item[1] for item in dense_desk])
+    above = np.array([[1000.0, 700.0, 1700.0]])
+    looked_down = facade.detect_facade(desk_points, desk_normals, above, mm_per_unit=1.0, up_prior=np.array([0.0, 0.0, 1.0]))
+    assert looked_down["planes"][0]["type"] == "facciata"
+    assert abs(looked_down["planes"][0]["normal"][2] - 1) < 1e-6
+    assert any(plane["type"] == "orizzontale" for plane in looked_down["planes"])
+
+    rng_noise = np.random.default_rng(4)
+    noise = rng_noise.normal(size=(60, 3)) * 100
+    noise_n = rng_noise.normal(size=(60, 3))
+    try:
+        facade.detect_facade(noise, noise_n, cameras, mm_per_unit=1.0)
+    except RuntimeError as exc:
+        assert "piano di fondo" in str(exc)
+        assert "pavimento" not in str(exc)
+    else:
+        raise AssertionError("a cloud without a plane should not become a facade")
+
+
 def check_imports_and_options():
     assert handler.handler({"input": {}})["ok"] is False
     opt = options.parse_options({"downscale": 3, "wallThicknessMm": 120, "roomOverrides": {"xmin": 1}, "device": "cpu"})
     assert opt.downscale == 3 and opt.wall_thickness_mm == 120 and opt.room_overrides["xmin"] == 1
+    assert options.parse_options({}).mode is None
+    assert options.parse_options({"mode": "Facciata"}).mode == "facciata"
+    assert options.resolve_mode(options.parse_options({}), {"project": {"kind": "facciata"}}) == "facciata"
+    assert options.resolve_mode(options.parse_options({"mode": "stanza"}), {"project": {"kind": "facciata"}}) == "stanza"
+    assert options.resolve_mode(options.parse_options({}), {"version": 2}) == "stanza"
+    try:
+        options.parse_options({"mode": "box"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("mode sconosciuta accettata")
     project_id = "11111111-2222-4333-8444-555555555555"
     photo = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
     assert r2.photo_key(project_id, 1, photo) == f"rilievi/{project_id}/foto/001-{photo}.jpg"
     assert r2.result_key(project_id, "walls.step").endswith("/risultati/walls.step")
-    modules = [export_mesh, openmvs, options, pipeline, prep, previews, r2, room, scale, sfm, status, walls, test_local]
+    modules = [export_mesh, facade, openmvs, options, pipeline, prep, previews, r2, room, scale, sfm, status, walls, test_local]
     assert all(mod is not None for mod in modules)
     assert sfm.compiled_sms() == {61, 89}
 
@@ -266,6 +380,7 @@ def main():
     check_scale()
     check_walls()
     check_ceiling_fallbacks()
+    check_facade()
     check_step()
     print("smoke ok")
 

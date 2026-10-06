@@ -3,7 +3,7 @@
 
 Input::
 
-    {"projectId": "<uuid>", "options": {"downscale": 2, "roomOverrides": {}}}
+    {"projectId": "<uuid>", "options": {"downscale": 2, "mode": "stanza"}}
 
 The handler downloads the survey from R2, runs the GPU pipeline and uploads
 ``rilievi/<projectId>/risultati/``. Progress is written to ``status.json`` and

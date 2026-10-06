@@ -75,7 +75,11 @@ def _plan(room_mm: dict, path: str):
         return pad + x * scale, canvas.height - pad - y * scale
     corners = [xy(0, 0), xy(length, 0), xy(length, width), xy(0, width)]
     draw.polygon(corners, outline=(20, 40, 60), width=4)
-    draw.text((pad, 24), f"{length:.0f} x {width:.0f} mm, h {dims['height_z']:.0f} mm", fill=(20, 40, 60))
+    if room_mm.get("mode") == "facciata":
+        label = f"facciata {length:.0f} x {width:.0f} mm, profondità {float(dims['height_z']):.0f} mm"
+    else:
+        label = f"{length:.0f} x {width:.0f} mm, h {dims['height_z']:.0f} mm"
+    draw.text((pad, 24), label, fill=(20, 40, 60))
     for opening in room_mm.get("openings") or []:
         u0, u1 = float(opening["u0"]), float(opening["u1"])
         wall = opening["wall"]

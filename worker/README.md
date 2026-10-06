@@ -16,11 +16,12 @@ e scrive in `rilievi/<projectId>/risultati/`:
 | file | contenuto |
 |---|---|
 | `status.json` | fase, percentuale, messaggi, tempi, errore |
-| `walls.step` | pareti, solette e porta in millimetri (CadQuery) |
+| `walls.step` | stanza: pareti, solette e porta. Facciata: piano di fondo e superfici davanti, in millimetri (CadQuery) |
 | `room_textured.glb` | mesh con texture, millimetri |
 | `room_textured_obj.zip` | OBJ + MTL + PNG |
 | `room_dense.ply` | nuvola densa in millimetri |
-| `room.json` | dimensioni Lx, Ly, H e aperture |
+| `room.json` | stanza: Lx, Ly, H e aperture. Facciata: piani rilevati (`mode`, dimensioni, supporto, scartati) |
+| `scene.json` | solo in modalità facciata, stesso contenuto di `room.json` |
 | `scale_report.json` / `.md` | scala ai minimi quadrati e residui |
 | `diagnostic.json` | foto registrate, pose, tempi |
 | `preview_iso.png`, `preview_top.png`, `preview_plan.png` | anteprime |
@@ -42,6 +43,16 @@ Il guscio della stanza è il bordo esterno di pavimento e soffitto. Un piano ver
 ```
 
 `openingsMm` è in millimetri nel sistema finale (Z in su, origine nell’angolo xmin/ymin). `cutOpenings` vale `doors` (solo porte), `all` o `none`.
+
+## Facciata
+
+`options.mode` vale `stanza` (default) o `facciata`. Se `options.mode` manca, il worker legge `project.kind` da `project.json` (l’app lo scrive già: `stanza` o `facciata`). Un file senza quel campo resta una stanza.
+
+In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola: è il piano di fondo (la parete, spessore `wallThicknessMm`, faccia su Z=0, spessore verso la camera opposta) più le superfici piane davanti che hanno estensione reale, ciascuna una lastra da 20 mm. Un frammento piccolo viene elencato in `skipped` e non diventa un solido. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
+
+```json
+{"input": {"projectId": "<uuid>", "options": {"mode": "facciata"}}}
+```
 
 ## Immagine Docker
 
@@ -131,6 +142,7 @@ A job completato, `output` è il riepilogo JSON (`ok`, `registeredImages`, `scal
 
 | chiave | default | ruolo |
 |---|---|---|
+| `mode` | `stanza`, oppure `project.kind` | `stanza` o `facciata` |
 | `downscale` | 2 | fattore intero, come il prototipo |
 | `device` | `auto` | `auto`, `cuda` o `cpu` |
 | `maxFeatures` | 12000 | feature SIFT per foto |
@@ -161,7 +173,7 @@ python worker/test_local.py --project-id <uuid> --device cpu
 
 `--project-dir` legge `project.json` e le JPEG (`foto/001.jpg` oppure il nome del `r2Key`) e non carica nulla. `--project-id` scarica da R2 e carica `risultati/`.
 
-Lo smoke test di CI non ha GPU né COLMAP: importa i moduli ed esegue scala e pareti su una stanza sintetica (pavimento, soffitto, armadio arretrato, quadro, tavolo, porta).
+Lo smoke test di CI non ha GPU né COLMAP: importa i moduli ed esegue scala e pareti su una stanza sintetica (pavimento, soffitto, armadio arretrato, quadro, tavolo, porta) e su una facciata sintetica (muro, piano della scrivania, monitor, senza pavimento né soffitto).
 
 ```bash
 pip install -r worker/requirements-smoke.txt

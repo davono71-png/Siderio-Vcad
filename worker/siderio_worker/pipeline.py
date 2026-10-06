@@ -8,8 +8,8 @@ import shutil
 import time
 import traceback
 
-from . import export_mesh, openmvs, prep, r2, room, scale, sfm, walls
-from .options import Options
+from . import export_mesh, facade, openmvs, prep, r2, room, scale, sfm, walls
+from .options import Options, resolve_mode
 from .previews import write_previews
 from .status import StatusWriter
 
@@ -38,6 +38,8 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
         with _timed(timings, "download"):
             project, photo_paths = _acquire(project_id, options, work)
         _check_id(project, project_id, options)
+        mode = resolve_mode(options, project)
+        print(f"[pipeline] mode {mode}", flush=True)
         stage = "prep"
         status.update(stage, 8, "Preparo le immagini, senza ruotare l'EXIF", timings)
         with _timed(timings, "prep"):
@@ -107,37 +109,55 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                     log=lambda msg: print(f"[mvs] {msg}", flush=True),
                 )
             stage = "planes"
-            status.update(stage, 90, "Riconosco pavimento, soffitto e pareti", timings)
+            if mode == "facciata":
+                status.update(stage, 90, "Riconosco il piano di fondo e le superfici davanti", timings)
+            else:
+                status.update(stage, 90, "Riconosco pavimento, soffitto e pareti", timings)
             with _timed(timings, "planes"):
                 points, normals = _load_cloud(os.path.join(mvs_dir, "scene_dense.ply"), mm_per_unit)
                 cameras = _camera_centres(dense_dir)
                 up = pose.get("upColmap") or sfm.image_up_prior(sfm_info["sparse"])
-                model_room = room.detect_room(
-                    points,
-                    normals,
-                    cameras=cameras,
-                    mm_per_unit=mm_per_unit,
-                    overrides=options.room_overrides,
-                    up_prior=up,
-                )
-                if options.openings_mm:
-                    model_room = room.apply_openings_mm(model_room, options.openings_mm, mm_per_unit)
+                if mode == "facciata":
+                    model_room = facade.detect_facade(
+                        points,
+                        normals,
+                        cameras=cameras,
+                        mm_per_unit=mm_per_unit,
+                        up_prior=up,
+                        wall_thickness_mm=options.wall_thickness_mm,
+                    )
+                else:
+                    model_room = room.detect_room(
+                        points,
+                        normals,
+                        cameras=cameras,
+                        mm_per_unit=mm_per_unit,
+                        overrides=options.room_overrides,
+                        up_prior=up,
+                    )
+                    if options.openings_mm:
+                        model_room = room.apply_openings_mm(model_room, options.openings_mm, mm_per_unit)
                 model_room["mm_per_unit"] = mm_per_unit
             _write_json(os.path.join(work, "room_model.json"), model_room)
             stage = "export"
             status.update(stage, 94, "Esporto STEP, GLB e OBJ", timings)
             with _timed(timings, "export"):
                 export_mesh.export_textured(model_room, mvs_dir, out_dir, mm_per_unit)
-                walls.export_step(
-                    model_room,
-                    os.path.join(out_dir, "walls.step"),
-                    mm_per_unit,
-                    options.wall_thickness_mm,
-                    options.floor_slab_mm,
-                    options.ceiling_slab_mm,
-                    options.cut_openings,
-                )
-                room_mm = room.to_millimetres(model_room, mm_per_unit)
+                if mode == "facciata":
+                    scene_mm = facade.to_millimetres(model_room, mm_per_unit)
+                    walls.export_facade_step(scene_mm, os.path.join(out_dir, "walls.step"))
+                    room_mm = scene_mm
+                else:
+                    walls.export_step(
+                        model_room,
+                        os.path.join(out_dir, "walls.step"),
+                        mm_per_unit,
+                        options.wall_thickness_mm,
+                        options.floor_slab_mm,
+                        options.ceiling_slab_mm,
+                        options.cut_openings,
+                    )
+                    room_mm = room.to_millimetres(model_room, mm_per_unit)
                 room_mm["scale"] = {
                     "mmPerUnit": mm_per_unit,
                     "rmsResidMm": report["rms_resid_mm"],
@@ -145,16 +165,24 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                     "source": report["scale_source"],
                 }
                 _write_json(os.path.join(out_dir, "room.json"), room_mm)
+                if mode == "facciata":
+                    _write_json(os.path.join(out_dir, "scene.json"), room_mm)
                 write_previews(out_dir, room_mm)
-        diagnostic = _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options)
+        diagnostic = _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options, mode)
         if mvs_dir and os.path.isfile(os.path.join(out_dir, "room.json")):
             with open(os.path.join(out_dir, "room.json"), encoding="utf-8") as handle:
-                diagnostic["room"] = json.load(handle)["dims"]
-            with open(os.path.join(work, "room_model.json"), encoding="utf-8") as handle:
-                detection = json.load(handle)["detection"]
-            diagnostic["wallNotes"] = detection["walls"]
-            diagnostic["floorMethod"] = detection.get("floorMethod")
-            diagnostic["ceilingMethod"] = detection.get("ceilingMethod")
+                scene_doc = json.load(handle)
+            if scene_doc.get("mode") == "facciata":
+                diagnostic["note"] = scene_doc.get("note")
+                diagnostic["planes"] = scene_doc.get("planes")
+                diagnostic["skipped"] = scene_doc.get("skipped")
+            else:
+                diagnostic["room"] = scene_doc["dims"]
+                with open(os.path.join(work, "room_model.json"), encoding="utf-8") as handle:
+                    detection = json.load(handle)["detection"]
+                diagnostic["wallNotes"] = detection["walls"]
+                diagnostic["floorMethod"] = detection.get("floorMethod")
+                diagnostic["ceilingMethod"] = detection.get("ceilingMethod")
         _write_json(os.path.join(out_dir, "diagnostic.json"), diagnostic)
         outputs = _output_keys(project_id, out_dir) if upload else {name: name for name in _present(out_dir)}
         if upload:
@@ -309,11 +337,12 @@ def _load_cloud(path: str, mm_per_unit: float):
     return np.asarray(down.points), np.asarray(down.normals)
 
 
-def _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options: Options):
+def _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options: Options, mode: str):
     public_pose = {k: v for k, v in pose.items() if k != "perImage"}
     public_pose["worst"] = sorted((pose.get("perImage") or {}).items(), key=lambda kv: kv[1]["dirErrDeg"], reverse=True)[:8]
     return {
         "projectId": project_id,
+        "mode": mode,
         "device": device,
         "deviceReason": why,
         "downscale": options.downscale,
@@ -336,11 +365,29 @@ def _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, w
 def _summary(project_id, sfm_info, report, out_dir, outputs, timings):
     room_path = os.path.join(out_dir, "room.json")
     dims = None
+    mode = "stanza"
+    planes = None
     if os.path.isfile(room_path):
-        dims = json.load(open(room_path, encoding="utf-8"))["dims"]
+        document = json.load(open(room_path, encoding="utf-8"))
+        mode = document.get("mode", "stanza")
+        if mode == "facciata":
+            planes = [
+                {
+                    "role": plane.get("role"),
+                    "type": plane.get("type"),
+                    "widthMm": plane.get("widthMm"),
+                    "heightMm": plane.get("heightMm"),
+                    "thicknessMm": plane.get("thicknessMm"),
+                    "support": plane.get("support"),
+                }
+                for plane in document.get("planes") or []
+            ]
+        else:
+            dims = document.get("dims")
     return {
         "ok": True,
         "projectId": project_id,
+        "mode": mode,
         "registeredImages": sfm_info["registered"],
         "totalImages": sfm_info["total"],
         "meanReprojPx": sfm_info["reprojPx"],
@@ -352,6 +399,7 @@ def _summary(project_id, sfm_info, report, out_dir, outputs, timings):
             "measurementsUsed": report["n_used"],
         },
         "room": dims,
+        "planes": planes,
         "outputs": outputs,
         "timingsSec": {k: round(v, 2) for k, v in timings.items()},
     }
@@ -369,6 +417,7 @@ def _present(out_dir: str) -> list[str]:
             "scale_report.md",
             "diagnostic.json",
             "room.json",
+            "scene.json",
             "status.json",
         }:
             names.append(filename)

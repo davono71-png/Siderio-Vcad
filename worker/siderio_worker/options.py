@@ -28,6 +28,9 @@ class Options:
     skip_dense: bool = False
     allow_missing: bool = False
     local_project_dir: str | None = None
+    # None means "read project.json". stanza is a room; facciata is a wall
+    # with the objects in front of it, and does not need a floor or a ceiling.
+    mode: str | None = None
 
     def thread_count(self) -> int:
         import os
@@ -78,7 +81,41 @@ def parse_options(raw) -> Options:
     opt.allow_missing = bool(raw.get("allowMissing", raw.get("allow_missing", False)))
     local = raw.get("localProjectDir", raw.get("local_project_dir"))
     opt.local_project_dir = str(local) if local else None
+    if raw.get("mode") not in (None, ""):
+        mode = str(raw.get("mode")).strip().lower()
+        if mode not in ("stanza", "facciata"):
+            raise ValueError("options.mode deve essere stanza o facciata.")
+        opt.mode = mode
     return opt
+
+
+def project_kind(project: dict) -> str | None:
+    """Kind stored by the app, if the file has one.
+
+    Current project.json (version 2) puts it in ``project.kind``. Older files
+    have neither kind nor mode; callers then default to a room.
+    """
+    if not isinstance(project, dict):
+        return None
+    block = project.get("project") if isinstance(project.get("project"), dict) else {}
+    for source in (block, project):
+        for key in ("kind", "mode", "type"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+    return None
+
+
+def resolve_mode(options: Options, project: dict) -> str:
+    """options.mode wins. Otherwise project.json, otherwise a room."""
+    if options.mode:
+        return options.mode
+    kind = project_kind(project)
+    if kind is None:
+        return "stanza"
+    if kind not in ("stanza", "facciata"):
+        raise ValueError(f"project.kind '{kind}' non è stanza o facciata.")
+    return kind
 
 
 def _pick(raw, name, alt=None):

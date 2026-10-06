@@ -49,3 +49,47 @@ def export_step(room: dict, out_step: str, mm_per_unit: float, thickness_mm: flo
         "openings": cut_list,
         "step": out_step,
     }
+
+
+def export_facade_step(scene_mm: dict, out_step: str):
+    """Slabs for a facade. Each plane is already in millimetres.
+
+    The visible face is the detected plane. Thickness grows behind that face
+    (away from the camera for the background wall, below a desk top, toward
+    the wall for a face parallel to it). Separate solids stay a compound:
+    nothing is fused into a room.
+    """
+    import cadquery as cq
+
+    shapes = []
+    exported = []
+    for plane in scene_mm.get("planes") or []:
+        width = float(plane["widthMm"])
+        height = float(plane["heightMm"])
+        thickness = float(plane["thicknessMm"])
+        if width < 1 or height < 1 or thickness <= 0:
+            continue
+        origin = _vec(plane["originMm"])
+        axis_u = _vec(plane["axisU"])
+        normal = _vec(plane["normal"])
+        back = tuple(origin[i] - normal[i] * thickness for i in range(3))
+        workplane = cq.Workplane(cq.Plane(back, tuple(axis_u), tuple(normal)))
+        shapes.append(workplane.box(width, height, thickness, centered=(False, False, False)).val())
+        exported.append(
+            {
+                "role": plane.get("role"),
+                "type": plane.get("type"),
+                "widthMm": round(width, 1),
+                "heightMm": round(height, 1),
+                "thicknessMm": round(thickness, 1),
+            }
+        )
+    if not shapes:
+        raise RuntimeError("Nessun piano da scrivere nello STEP della facciata.")
+    compound = cq.Compound.makeCompound(shapes)
+    cq.exporters.export(compound, out_step)
+    return {"units": "mm", "solids": exported, "step": out_step}
+
+
+def _vec(values):
+    return tuple(float(v) for v in values)
