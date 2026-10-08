@@ -537,12 +537,12 @@ def check_zup_facade(rng=None):
 
 
 def check_sparse_patch_not_opening():
-    """A missing patch is a lacuna. A thin wing still belongs to the wall.
+    """A missing interior patch is a lacuna. A sparse wing still belongs to the wall.
 
-    The cloud is already Y-up, Z toward the camera. Six points on the left
-    are under one percent of the cloud, so a point-count percentile would
-    drop that wing. Bins keep it. The empty rectangles have no points behind
-    them and no reveal, so they are not cut.
+    The cloud is already Y-up, Z toward the camera. The wing is thin but
+    present in every bin, so the slab keeps it. One outlier above the wall
+    does not. The empty rectangles have no points behind them and no reveal.
+    The one that touches the top is the wall ending, not a lacuna.
     """
     rng = np.random.default_rng(19)
     wall, wall_n = _grid(
@@ -559,10 +559,21 @@ def check_sparse_patch_not_opening():
     door_hole = (wall[:, 0] > 2600) & (wall[:, 0] < 3500) & (wall[:, 1] < 2000)
     keep = ~above_picture & ~interior & ~door_hole
     wall, wall_n = wall[keep], wall_n[keep]
-    wing_x = np.linspace(-480.0, -20.0, 6)
-    wing = np.stack([wing_x, np.full(6, 1200.0), np.zeros(6)], axis=1)
-    wing_n = np.repeat([[0.0, 0.0, 1.0]], 6, axis=0)
-    parts = [(wall, wall_n), (wing, wing_n)]
+    # Sparse wing: a point in every bin, far below the density of the wall.
+    wing, wing_n = _grid(
+        np.array([-480.0, 400.0, 0.0]),
+        np.array([460.0, 0.0, 0.0]),
+        np.array([0.0, 1600.0, 0.0]),
+        12,
+        16,
+        [0.0, 0.0, 1.0],
+        noise=1,
+        rng=rng,
+    )
+    # One point above the facade must not stretch the slab.
+    outlier = np.array([[2000.0, 3400.0, 0.0]])
+    outlier_n = np.array([[0.0, 0.0, 1.0]])
+    parts = [(wall, wall_n), (wing, wing_n), (outlier, outlier_n)]
     parts.append(_grid(np.array([2600.0, 0.0, -140.0]), np.array([900.0, 0.0, 0.0]), np.array([0.0, 2000.0, 0.0]), 12, 24, [0.0, 0.0, 1.0], noise=2, rng=rng))
     parts.append(_grid(np.array([4000.0, 0.0, 0.0]), np.array([0.0, 0.0, 800.0]), np.array([0.0, 2400.0, 0.0]), 10, 28, [-1.0, 0.0, 0.0], rng=rng))
     parts.append(_grid(np.array([1500.0, 0.0, 0.0]), np.array([0.0, 0.0, 400.0]), np.array([0.0, 1000.0, 0.0]), 8, 14, [-1.0, 0.0, 0.0], rng=rng))
@@ -584,7 +595,7 @@ def check_sparse_patch_not_opening():
     scene = facade.to_millimetres(detected, 1.0)
     wall_plane = next(plane for plane in scene["planes"] if plane["role"] == "background")
     assert wall_plane["widthMm"] > 4300, wall_plane
-    assert abs(wall_plane["heightMm"] - 2500) < 250, wall_plane
+    assert 2300 < wall_plane["heightMm"] < 2700, wall_plane
     assert not any(item["kind"] == "window" for item in scene["openings"]), scene["openings"]
     doors = [item for item in scene["openings"] if item["kind"] == "door"]
     assert len(doors) == 1, scene["openings"]
@@ -595,9 +606,9 @@ def check_sparse_patch_not_opening():
         return item["x0"] <= x <= item["x1"] and item["y0"] <= y <= item["y1"]
 
     lacune = scene["lacune"]
-    assert any(item["kind"] == "lacuna" and item.get("reason") == "dati mancanti" and covers(item, 1000, 2100) for item in lacune), lacune
-    assert any(item["kind"] == "lacuna" and covers(item, 2300, 800) for item in lacune), lacune
-    assert not any(covers(item, 1000, 2100) or covers(item, 2300, 800) for item in scene["openings"])
+    assert any(item["kind"] == "lacuna" and item.get("reason") == "dati mancanti" and covers(item, 2700, 900) for item in lacune), lacune
+    assert not any(covers(item, 1400, 2100) or covers(item, 2700, 900) for item in scene["openings"])
+    assert not any(covers(item, 1400, 2100) for item in lacune), lacune
     returns = [plane for plane in scene["planes"] if plane["role"] == "ritorno"]
     assert len(returns) == 1, scene["planes"]
     assert returns[0]["step"] == "walls" and returns[0]["thicknessMm"] == 150.0, returns[0]
@@ -611,6 +622,52 @@ def check_sparse_patch_not_opening():
     print(
         f"sparse facade {wall_plane['widthMm']:.0f} x {wall_plane['heightMm']:.0f} mm, "
         f"door {doors[0]['widthMm']:.0f}x{doors[0]['heightMm']:.0f}, lacune {len(lacune)}, extra {len(extras)}"
+    )
+
+
+def check_real_facade_fixture():
+    """Downsampled office facade. A sparse top is not a window, and the door stays."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "facade_8ad293ef.npz")
+    data = np.load(path)
+    detected = facade.detect_facade(
+        data["points"],
+        data["normals"],
+        cameras=None,
+        mm_per_unit=1.0,
+        up_prior=np.array([0.0, 1.0, 0.0]),
+        wall_thickness_mm=150.0,
+    )
+    scene = facade.to_millimetres(detected, 1.0)
+    wall = next(plane for plane in scene["planes"] if plane["role"] == "background")
+    assert 7400 < wall["widthMm"] < 8200, wall
+    assert 2700 < wall["heightMm"] < 3100, wall
+    assert wall["thicknessMm"] == 150.0
+    assert wall["normal"][2] == 1.0
+    assert wall["originMm"][1] >= -1
+    doors = [item for item in scene["openings"] if item["kind"] == "door"]
+    windows = [item for item in scene["openings"] if item["kind"] == "window"]
+    assert windows == []
+    assert len(doors) == 1, scene["openings"]
+    door = doors[0]
+    assert 1000 < door["widthMm"] < 1300, door
+    assert 1800 < door["heightMm"] < 2300, door
+    assert 2500 < door["x0"] < 3300, door
+    assert 3700 < door["x1"] < 4300, door
+    assert abs(door["y0"] - wall["originMm"][1]) < 1
+    ground = next(plane for plane in scene["planes"] if plane["role"] == "terreno")
+    assert ground["normal"] == [0.0, 1.0, 0.0]
+    assert abs(ground["originMm"][1]) < 1
+    assert ground["step"] == "walls"
+    returns = [plane for plane in scene["planes"] if plane["role"] == "ritorno"]
+    assert len(returns) == 1, scene["planes"]
+    assert returns[0]["step"] == "walls" and returns[0]["thicknessMm"] == 150.0
+    assert abs(abs(returns[0]["normal"][0]) - 1) < 1e-6
+    assert returns[0]["normal"][1] == 0.0
+    horizontals = [plane for plane in scene["planes"] if plane["step"] == "walls" and plane["type"] == "orizzontale"]
+    assert horizontals == [ground]
+    print(
+        f"office fixture {wall['widthMm']:.0f} x {wall['heightMm']:.0f} mm, "
+        f"door {door['widthMm']:.0f}x{door['heightMm']:.0f} at x {door['x0']:.0f}"
     )
 
 
@@ -661,6 +718,7 @@ def main():
     check_walls()
     check_ceiling_fallbacks()
     check_facade()
+    check_real_facade_fixture()
     check_step()
     print("smoke ok")
 

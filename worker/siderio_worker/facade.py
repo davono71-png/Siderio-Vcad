@@ -55,10 +55,26 @@ def detect_facade(
     if yaw is None:
         raise RuntimeError("Non trovo un piano di fondo abbastanza esteso.")
     rotation = yaw @ level
-    if float(rotation[1] @ up) < 0.95:
-        raise RuntimeError("Non trovo un piano di fondo abbastanza esteso.")
     aligned = leveled @ yaw.T
     aligned_normals = leveled_normals @ yaw.T
+    aligned_cameras = leveled_cameras @ yaw.T if len(leveled_cameras) else leveled_cameras
+    # Gravity can leave the floor sloping along the facade. A floor within 5°
+    # of horizontal becomes the level, so the slab and the return wall are plumb.
+    floor_rotation = _floor_level_rotation(aligned, aligned_normals, mm_per_unit, span)
+    if floor_rotation is not None:
+        aligned = aligned @ floor_rotation.T
+        aligned_normals = aligned_normals @ floor_rotation.T
+        if len(aligned_cameras):
+            aligned_cameras = aligned_cameras @ floor_rotation.T
+        rotation = floor_rotation @ rotation
+        refined = _largest_vertical_normal(aligned, aligned_normals, aligned_cameras, mm_per_unit, span)
+        yaw_again = None if refined is None else _yaw_to_wall(refined)
+        if yaw_again is not None:
+            aligned = aligned @ yaw_again.T
+            aligned_normals = aligned_normals @ yaw_again.T
+            rotation = yaw_again @ rotation
+    if float(rotation[1] @ up) < 0.95:
+        raise RuntimeError("Non trovo un piano di fondo abbastanza esteso.")
     background, shift = _background_plane(aligned, aligned_normals, mm_per_unit, span, wall_thickness_mm)
     aligned = aligned + shift
     openings, lacune, door_mask = _find_openings(aligned, aligned_normals, background, mm_per_unit, span)
@@ -73,16 +89,15 @@ def detect_facade(
     )
     planes = [background] + fronts
     _assign_steps(planes)
+    _snap_orthogonal(planes)
     move = _park_on_ground(planes)
-    for item in list(openings) + list(lacune):
-        item["x0"] = float(item["x0"]) + float(move[0])
-        item["x1"] = float(item["x1"]) + float(move[0])
-        item["y0"] = float(item["y0"]) + float(move[1])
-        item["y1"] = float(item["y1"]) + float(move[1])
+    move = move + _seat_floor(planes)
+    _raise_wall_to_floor(planes)
+    _shift_openings(list(openings) + list(lacune), move)
     floor_y = float(background["origin"][1])
     for item in openings:
         if item.get("kind") == "door":
-            item["y0"] = min(float(item["y0"]), floor_y)
+            item["y0"] = floor_y
     dims = _dims(planes)
     transform = np.eye(4)
     transform[:3, :3] = rotation
@@ -296,7 +311,11 @@ def _estimate_up(points, normals, cameras, camera_ups, up_prior, mm_per_unit, sp
     ground = _ground_normal(points, normals, cameras, up, mm_per_unit, span)
     if ground is None:
         return up, source
-    if float(ground @ up) >= np.cos(np.radians(25)):
+    agreement = float(ground @ up)
+    if agreement >= np.cos(np.radians(5)):
+        # Averaging a small tilt leaves the floor sloping in the CAD frame.
+        return ground, source + "+terreno"
+    if agreement >= np.cos(np.radians(25)):
         blended = up + ground
         return blended / np.linalg.norm(blended), source + "+terreno"
     cameras_confirm = cameras_up is not None and float(cameras_up @ up) >= np.cos(np.radians(25))
@@ -318,6 +337,9 @@ def _ground_normal(points, normals, cameras, up, mm_per_unit, span):
             continue
         plane = max(measured, key=lambda item: item["width"] * item["height"])
         area = plane["width"] * plane["height"]
+        fitted = _fitted_normal(points, normals, normal, plane, mm_per_unit, span)
+        if fitted is not None:
+            normal = fitted
         alignment = float(normal @ up)
         center = np.asarray(plane["center"], float)
         above = int(np.sum(points @ normal > float(center @ normal) + band))
@@ -332,6 +354,86 @@ def _ground_normal(points, normals, cameras, up, mm_per_unit, span):
     if best_override is not None:
         return best_override[1]
     return None
+
+
+def _fitted_normal(points, normals, normal, plane, mm_per_unit, span):
+    """Plane of the points, not the average of noisy normals."""
+    band = _mu(50, mm_per_unit, span)
+    centre = np.asarray(plane["center"], float)
+    offset = float(centre @ normal)
+    selected = (normals @ normal > 0.75) & (np.abs(points @ normal - offset) < band)
+    if int(selected.sum()) < 80:
+        return None
+    samples = points[selected]
+    centered = samples - samples.mean(0)
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    fitted = vt[-1]
+    if float(fitted @ normal) < 0:
+        fitted = -fitted
+    length = float(np.linalg.norm(fitted))
+    if length < 1e-8:
+        return None
+    return fitted / length
+
+
+def _floor_level_rotation(points, normals, mm_per_unit, span):
+    """Rotation that lays a slightly tilted floor onto +Y, or None."""
+    mask = np.abs(normals[:, 1]) >= _HORIZONTAL
+    if int(mask.sum()) < 80:
+        return None
+    band = _mu(60, mm_per_unit, span)
+    peaks = _peak_positions(points[mask, 1], _mu(40, mm_per_unit, span), 40)
+    normal = None
+    for peak in sorted(peaks, key=lambda item: item["pos"]):
+        selected = mask & (np.abs(points[:, 1] - float(peak["pos"])) < band)
+        if int(selected.sum()) < 80:
+            continue
+        samples = points[selected]
+        centered = samples - samples.mean(0)
+        _, _, vt = np.linalg.svd(centered, full_matrices=False)
+        fitted = vt[-1]
+        if fitted[1] < 0:
+            fitted = -fitted
+        fitted = fitted / np.linalg.norm(fitted)
+        if float(fitted[1]) < np.cos(np.radians(15)):
+            continue
+        axis_u, axis_v = _inplane(fitted)
+        relative = samples - samples.mean(0)
+        spans = []
+        for axis in (axis_u, axis_v):
+            coords = relative @ axis
+            spans.append(float(np.percentile(coords, 98) - np.percentile(coords, 2)))
+        if min(spans) < _mu(600, mm_per_unit, span) or max(spans) < _mu(1500, mm_per_unit, span):
+            continue
+        normal = fitted
+        break
+    if normal is None:
+        return None
+    vertical = float(normal @ np.array([0.0, 1.0, 0.0]))
+    if vertical > np.cos(np.radians(0.25)):
+        return None
+    if vertical < np.cos(np.radians(5)):
+        return None
+    return _rotation_from_to(normal, np.array([0.0, 1.0, 0.0]))
+
+
+def _rotation_from_to(source, target) -> np.ndarray:
+    """Rows map ``source`` onto ``target``."""
+    source = np.asarray(source, float)
+    target = np.asarray(target, float)
+    source = source / np.linalg.norm(source)
+    target = target / np.linalg.norm(target)
+    cross = np.cross(source, target)
+    cosine = float(np.dot(source, target))
+    sine = float(np.linalg.norm(cross))
+    if sine < 1e-10:
+        return np.eye(3)
+    axis = cross / sine
+    skew = np.array(
+        [[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]],
+        float,
+    )
+    return np.eye(3) + skew * sine + (skew @ skew) * (1.0 - cosine)
 
 
 def _level_rotation(up) -> np.ndarray:
@@ -472,24 +574,57 @@ def _background_plane(points, normals, mm_per_unit, span, wall_thickness_mm):
     return measured, shift
 
 
-def _cell_span(values, bin_w):
-    """Outer edges of the largest run of occupied bins, bridging short gaps."""
+def _robust_span(values, bin_w, sparse_low=False):
+    """Extent of the wall face.
+
+    Along the facade, a sparse wing that still has points in every bin stays
+    inside. The far end is a percentile of the dense run, so a handful of
+    outliers does not stretch the slab. The coordinates are the points
+    themselves, not histogram edges.
+    """
     values = np.asarray(values, float)
-    lo = float(np.min(values))
-    hi = float(np.max(values))
-    if hi - lo <= bin_w or len(values) < 4:
-        return lo, hi
-    edges = np.arange(lo, hi + bin_w * 0.5, bin_w)
-    if len(edges) < 3:
-        return lo, hi
+    if len(values) < 30:
+        low, high = np.percentile(values, [1, 99])
+        return float(low), float(high)
+    low = float(np.min(values))
+    high = float(np.max(values))
+    if high - low <= bin_w:
+        return low, high
+    edges = np.arange(low, high + bin_w, bin_w)
     hist, edges = np.histogram(values, edges)
-    present = hist >= 1
-    bridge = 2
-    flags = list(present) + [False] * (bridge + 1)
+    occupied = hist[hist > 0]
+    if len(occupied) == 0:
+        low, high = np.percentile(values, [1, 99])
+        return float(low), float(high)
+    typical = float(np.median(occupied))
+    strong = hist >= max(5.0, 0.04 * typical)
+    start, end = _true_run(strong, bridge=1)
+    if start is None:
+        low, high = np.percentile(values, [1, 99])
+        return float(low), float(high)
+    core = (values >= float(edges[start])) & (values <= float(edges[min(end, len(edges) - 1)]))
+    minimum = max(12.0, 0.004 * typical)
+    ext_start = _extend_sparse(hist, start, -1, minimum)
+    ext_end = _extend_sparse(hist, end - 1, 1, minimum) + 1
+    right = float(edges[min(ext_end, len(edges) - 1)])
+    chosen = (values >= float(edges[ext_start])) & (values <= right)
+    if int(chosen.sum()) < 30 or int(core.sum()) < 30:
+        low, high = np.percentile(values, [1, 99])
+        return float(low), float(high)
+    if sparse_low:
+        low = float(np.min(values[chosen]))
+        high = float(np.percentile(values[core], 99.5))
+    else:
+        low, high = np.percentile(values[chosen], [0.3, 99.5])
+    return float(low), float(high)
+
+
+def _true_run(flags, bridge):
     best = None
     start = None
     gap = 0
-    for index, flag in enumerate(flags):
+    padded = list(flags) + [False] * (bridge + 1)
+    for index, flag in enumerate(padded):
         if flag:
             if start is None:
                 start = index
@@ -504,18 +639,27 @@ def _cell_span(values, bin_w):
                 best = (start, end)
             start = None
             gap = 0
-    if best is None:
-        return lo, hi
-    return float(edges[best[0]]), float(edges[min(best[1], len(edges) - 1)])
+    return (None, None) if best is None else best
+
+
+def _extend_sparse(hist, index, step, minimum):
+    """Include a connected sparse wing. Stop when the bins go empty."""
+    cursor = index
+    while True:
+        nxt = cursor + step
+        if nxt < 0 or nxt >= len(hist) or hist[nxt] < minimum:
+            break
+        cursor = nxt
+    return cursor
 
 
 def _cover_wall_face(measured, points, selected, mm_per_unit, span):
     samples = points[selected]
     if len(samples) < 40:
         return
-    bin_w = _mu(100, mm_per_unit, span)
-    x0, x1 = _cell_span(samples[:, 0], bin_w)
-    y0, y1 = _cell_span(samples[:, 1], bin_w)
+    bin_w = _mu(50, mm_per_unit, span)
+    x0, x1 = _robust_span(samples[:, 0], bin_w, sparse_low=True)
+    y0, y1 = _robust_span(samples[:, 1], bin_w, sparse_low=False)
     if x1 - x0 < _mu(400, mm_per_unit, span) or y1 - y0 < _mu(400, mm_per_unit, span):
         return
     depth = float(np.median(samples[:, 2]))
@@ -635,24 +779,32 @@ def _grid_openings(occupied, width, height, background, points, normals, mm_per_
     ny, nx = occupied.shape
     openings = []
     lacune = []
-    head = min(ny, max(4, int(round(_mu(2000, mm_per_unit, span) / height * ny))))
-    low_cut = max(3, int(round(_mu(1400, mm_per_unit, span) / height * ny)))
-    door_column = []
-    for index in range(nx):
-        door_column.append(_door_column(occupied[:, index], head, low_cut))
-    expanded = door_column[:]
-    for index in range(nx):
-        if expanded[index]:
-            continue
-        touches = (index > 0 and door_column[index - 1]) or (index + 1 < nx and door_column[index + 1])
-        if touches and float(occupied[:low_cut, index].mean()) < 0.45 and bool(occupied[:, index].any()):
-            expanded[index] = True
-    run = _longest_run(expanded)
-    if run is not None and run[1] - run[0] >= 3:
-        start, stop = run
-        flanked = start > 0 and stop < nx and float(occupied[:, start - 1].mean()) >= 0.35 and float(occupied[:, stop].mean()) >= 0.35
-        tops = [_gap_top(occupied[:, index], head) for index in range(start, stop)]
-        y1 = float(np.median(tops)) / ny * height
+    # A door is an empty, door-sized gap that reaches the floor, with wall on
+    # both sides and a head above it. The gap may start a few hundred
+    # millimetres up: a sill is not a reason to drop the opening. Points seen
+    # through it are not required.
+    near = max(1, int(round(_mu(500, mm_per_unit, span) / height * ny)))
+    min_rows = max(4, int(round(_mu(1500, mm_per_unit, span) / height * ny)))
+    head_rows = max(2, int(round(_mu(180, mm_per_unit, span) / height * ny)))
+    door_span = [_door_gap(occupied[:, index], near, min_rows, head_rows) for index in range(nx)]
+    expanded = [span_item is not None for span_item in door_span]
+    core = _longest_run(expanded)
+    if core is not None and core[1] - core[0] >= 3:
+        core_spans = [door_span[index] for index in range(core[0], core[1]) if door_span[index] is not None]
+        gap_y0 = int(np.median([item[0] for item in core_spans]))
+        gap_y1 = int(np.median([item[1] for item in core_spans]))
+        start, stop = core
+        while start > 0 and _mostly_open(occupied[gap_y0:gap_y1, start - 1]):
+            start -= 1
+        while stop < nx and _mostly_open(occupied[gap_y0:gap_y1, stop]):
+            stop += 1
+        flanked = (
+            start > 0
+            and stop < nx
+            and float(occupied[gap_y0:gap_y1, start - 1].mean()) >= 0.4
+            and float(occupied[gap_y0:gap_y1, stop].mean()) >= 0.4
+        )
+        y1 = gap_y1 / ny * height
         opening = _accept_door(start / nx * width, stop / nx * width, 0.0, y1, background, mm_per_unit, span) if flanked else None
         if opening is not None:
             openings.append(opening)
@@ -663,6 +815,7 @@ def _grid_openings(occupied, width, height, background, points, normals, mm_per_
             continue
         seed = max(gaps[index], key=lambda gap: gap[1] - gap[0])
         columns = [index]
+        spans = [seed]
         y0, y1 = seed
         used[index] = True
         for other in range(index + 1, nx):
@@ -676,18 +829,31 @@ def _grid_openings(occupied, width, height, background, points, normals, mm_per_
             if match is None:
                 break
             columns.append(other)
+            spans.append(match)
             used[other] = True
             y0 = min(y0, match[0])
             y1 = max(y1, match[1])
         if len(columns) < 3 or y1 - y0 < 3:
             continue
+        # The shared band, not the union. One column that runs out to the
+        # ceiling must not erase the interior hole or paint over wall.
+        core_y0 = int(np.median([item[0] for item in spans]))
+        core_y1 = int(np.median([item[1] for item in spans]))
+        if core_y1 - core_y0 < 3:
+            continue
+        patch = occupied[core_y0:core_y1, columns[0] : columns[-1] + 1]
+        if patch.size == 0 or float(patch.mean()) > 0.25:
+            continue
         x0 = columns[0] / nx * width
         x1 = (columns[-1] + 1) / nx * width
-        gy0 = y0 / ny * height
-        gy1 = y1 / ny * height
-        margin = _mu(120, mm_per_unit, span)
+        gy0 = core_y0 / ny * height
+        gy1 = core_y1 / ny * height
+        margin = _mu(150, mm_per_unit, span)
         inside = x0 >= margin and gy0 >= margin and x1 <= width - margin and gy1 <= height - margin
-        opening = _accept_window(x0, x1, gy0, gy1, background, mm_per_unit, span) if inside else None
+        # A gap on the outer edge is the wall ending, not a hole in the data.
+        if not inside:
+            continue
+        opening = _accept_window(x0, x1, gy0, gy1, background, mm_per_unit, span)
         if opening is not None and _has_opening_evidence(points, normals, x0, x1, gy0, gy1, mm_per_unit, span):
             openings.append(opening)
             continue
@@ -713,7 +879,8 @@ def _has_opening_evidence(points, normals, x0, x1, y0, y1, mm_per_unit, span) ->
     if int(behind.sum()) >= 20:
         return True
     band = _mu(160, mm_per_unit, span)
-    near = (np.abs(points[:, 2]) > _mu(40, mm_per_unit, span)) & (np.abs(points[:, 2]) < _mu(280, mm_per_unit, span)) & (normals[:, 2] > 0.45)
+    # Past the wall relief. A point 50 mm off the face is brick or noise, not a jamb.
+    near = (np.abs(points[:, 2]) > _mu(80, mm_per_unit, span)) & (np.abs(points[:, 2]) < _mu(280, mm_per_unit, span)) & (normals[:, 2] > 0.45)
     # A frame goes around the hole. A picture or a shelf on one side does not.
     sides = (
         near & (points[:, 0] > x0 - band) & (points[:, 0] < x0) & (points[:, 1] > y0) & (points[:, 1] < y1),
@@ -722,6 +889,42 @@ def _has_opening_evidence(points, normals, x0, x1, y0, y1, mm_per_unit, span) ->
         near & (points[:, 1] > y1) & (points[:, 1] < y1 + band) & (points[:, 0] > x0) & (points[:, 0] < x1),
     )
     return sum(int(side.sum()) >= 8 for side in sides) >= 3
+
+
+def _door_gap(column, near, min_rows, head_rows):
+    """Tallest empty run that starts near the floor and has wall above it."""
+    best = None
+    for y0, y1 in _empty_runs(column):
+        if y0 > near or y1 - y0 < min_rows or y1 >= len(column) - 1:
+            continue
+        head = column[y1 : y1 + head_rows]
+        if len(head) < head_rows or float(head.mean()) < 0.5:
+            continue
+        if best is None or y1 - y0 > best[1] - best[0]:
+            best = (y0, y1)
+    return best
+
+
+def _mostly_open(column) -> bool:
+    if len(column) == 0:
+        return False
+    return float(np.mean(column)) <= 0.45
+
+
+def _empty_runs(column):
+    """Empty runs of at least two cells, including a run that touches the floor."""
+    runs = []
+    start = None
+    for index, flag in enumerate(column):
+        if not flag and start is None:
+            start = index
+        elif flag and start is not None:
+            if index - start >= 2:
+                runs.append((start, index))
+            start = None
+    if start is not None and len(column) - start >= 2:
+        runs.append((start, len(column)))
+    return runs
 
 
 def _door_column(column, head, low_cut) -> bool:
@@ -971,6 +1174,74 @@ def _inplane(normal: np.ndarray):
     return axis_u, axis_v
 
 
+def _snap_orthogonal(planes, limit_deg=5.0):
+    """Near-axis slabs become exact boxes. A 2° floor or return is not a CAD tilt."""
+    limit = float(np.cos(np.radians(limit_deg)))
+    for plane in planes:
+        normal = np.asarray(plane["normal"], float)
+        length = float(np.linalg.norm(normal))
+        if length < 1e-8:
+            continue
+        normal = normal / length
+        axis = int(np.argmax(np.abs(normal)))
+        if abs(float(normal[axis])) < limit:
+            continue
+        snapped = np.zeros(3)
+        snapped[axis] = 1.0 if normal[axis] >= 0 else -1.0
+        corners = np.vstack(_face_corners(plane))
+        centre = corners.mean(0)
+        axis_u, axis_v = _inplane(snapped)
+        relative = corners - centre
+        coords_u = relative @ axis_u
+        coords_v = relative @ axis_v
+        u0, u1 = float(coords_u.min()), float(coords_u.max())
+        v0, v1 = float(coords_v.min()), float(coords_v.max())
+        origin = centre + axis_u * u0 + axis_v * v0
+        plane["normal"] = [float(v) for v in snapped]
+        plane["axisU"] = [float(v) for v in axis_u]
+        plane["axisV"] = [float(v) for v in axis_v]
+        plane["width"] = u1 - u0
+        plane["height"] = v1 - v0
+        plane["origin"] = [float(v) for v in origin]
+        plane["center"] = [float(v) for v in origin + axis_u * ((u1 - u0) / 2.0) + axis_v * ((v1 - v0) / 2.0)]
+
+
+def _seat_floor(planes):
+    """Put the ground face on Y=0. The wall then stands on that slab."""
+    floors = [plane for plane in planes if plane.get("role") == "terreno"]
+    if not floors:
+        return np.zeros(3)
+    corners = np.vstack([corner for plane in floors for corner in _face_corners(plane)])
+    move = np.array([0.0, -float(np.median(corners[:, 1])), 0.0])
+    if abs(float(move[1])) < 1e-6:
+        return np.zeros(3)
+    for plane in planes:
+        origin = np.asarray(plane["origin"], float) + move
+        center = np.asarray(plane["center"], float) + move
+        plane["origin"] = [float(v) for v in origin]
+        plane["center"] = [float(v) for v in center]
+    return move
+
+
+def _raise_wall_to_floor(planes):
+    """The facade stands on the floor. Noise below Y=0 is not part of the slab."""
+    wall = next(plane for plane in planes if plane.get("role") == "background")
+    bottom = float(wall["origin"][1])
+    if bottom >= -1e-6:
+        return
+    wall["origin"][1] = 0.0
+    wall["height"] = max(1.0, float(wall["height"]) + bottom)
+    wall["center"][1] = float(wall["height"]) / 2.0
+
+
+def _shift_openings(items, move):
+    for item in items:
+        item["x0"] = float(item["x0"]) + float(move[0])
+        item["x1"] = float(item["x1"]) + float(move[0])
+        item["y0"] = float(item["y0"]) + float(move[1])
+        item["y1"] = float(item["y1"]) + float(move[1])
+
+
 def _park_on_ground(planes):
     """Keep the background face on Z=0 and pull a negative X/Y back to the origin."""
     corners = []
@@ -1013,13 +1284,16 @@ def _assign_steps(planes):
         if role in ("background", "terreno"):
             plane["step"] = "walls"
             continue
-        if _return_wall(plane, wall_w, wall_h):
-            plane["role"] = "ritorno"
-            plane["thickness"] = background["thickness"]
-            plane["thicknessSource"] = "parete"
-            plane["step"] = "walls"
-            continue
         plane["step"] = "extra"
+    # One return, at an end. A second tall plane there is a jamb or a cabinet.
+    returns = [plane for plane in planes if _return_wall(plane, wall_w, wall_h)]
+    returns.sort(key=lambda plane: float(plane["width"]) * float(plane["height"]), reverse=True)
+    if returns:
+        chosen = returns[0]
+        chosen["role"] = "ritorno"
+        chosen["thickness"] = background["thickness"]
+        chosen["thicknessSource"] = "parete"
+        chosen["step"] = "walls"
 
 
 def _return_wall(plane, wall_w, wall_h) -> bool:
