@@ -178,7 +178,42 @@ def scale_report(project: dict, located: dict, ray_fn=None, monte_carlo: int = 0
     # point reports are attached by the caller when it has them; keep the key.
     if monte_carlo and ray_fn is not None and len(used) >= 1:
         report["monte_carlo_click_noise_2px_std_mm"] = _monte_carlo(project, ray_fn, used, scale, monte_carlo)
+    report["warning"] = consistency_warning(report)
     return report
+
+
+def consistency_warning(report: dict, threshold_pct: float = 5.0) -> str | None:
+    """Flag leave-one-out disagreement the app can show next to the scale.
+
+    A click on the wrong pixel moves one distance by much more than the
+    residual of a single least-squares fit. Leaving each measurement out
+    shows that: if the held-out tape and the scale from the others differ
+    by more than ``threshold_pct``, the quotes are inconsistent.
+    """
+    measurements = {item["pair"]: item for item in report.get("measurements") or [] if not item.get("duplicate")}
+    worst_pct = 0.0
+    worst = None
+    for item in report.get("leave_one_out") or []:
+        pair = item.get("leftOut")
+        err = item.get("errMm")
+        if err is None or pair is None:
+            continue
+        measured = (measurements.get(pair) or {}).get("mm")
+        if not measured:
+            predicted = item.get("predictedMm")
+            if predicted is None:
+                continue
+            measured = float(predicted) - float(err)
+        if not measured:
+            continue
+        pct = abs(float(err)) / float(measured) * 100.0
+        if pct > worst_pct:
+            worst_pct = pct
+            worst = (pair, float(err), pct)
+    if worst is None or worst_pct <= float(threshold_pct):
+        return None
+    pair, err, pct = worst
+    return f"Quote incoerenti: lasciando fuori {pair} l'errore è {err:+.0f} mm ({pct:.1f}%)."
 
 
 def _monte_carlo(project, ray_fn, used, scale, draws):
@@ -213,6 +248,10 @@ def render_markdown(report: dict) -> str:
         f"- Residuo massimo: **{report['max_abs_resid_mm']:.2f} mm**",
         f"- Quote usate (i duplicati non contano): {report['n_used']}",
         "",
+    ]
+    if report.get("warning"):
+        lines += [f"- **Attenzione:** {report['warning']}", ""]
+    lines += [
         "| quota | misura mm | modello mm | residuo mm | residuo % |",
         "|---|---:|---:|---:|---:|",
     ]

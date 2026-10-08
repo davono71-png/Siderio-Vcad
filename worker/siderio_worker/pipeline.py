@@ -115,7 +115,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 status.update(stage, 90, "Riconosco pavimento, soffitto e pareti", timings)
             with _timed(timings, "planes"):
                 points, normals = _load_cloud(os.path.join(mvs_dir, "scene_dense.ply"), mm_per_unit)
-                cameras = _camera_centres(dense_dir)
+                cameras, camera_ups = _camera_poses(dense_dir)
                 up = pose.get("upColmap") or sfm.image_up_prior(sfm_info["sparse"])
                 if mode == "facciata":
                     model_room = facade.detect_facade(
@@ -125,6 +125,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                         mm_per_unit=mm_per_unit,
                         up_prior=up,
                         wall_thickness_mm=options.wall_thickness_mm,
+                        camera_ups=camera_ups,
                     )
                 else:
                     model_room = room.detect_room(
@@ -164,6 +165,8 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                     "maxAbsResidMm": report["max_abs_resid_mm"],
                     "source": report["scale_source"],
                 }
+                if report.get("warning"):
+                    room_mm["scale"]["warning"] = report["warning"]
                 _write_json(os.path.join(out_dir, "room.json"), room_mm)
                 if mode == "facciata":
                     _write_json(os.path.join(out_dir, "scene.json"), room_mm)
@@ -174,8 +177,10 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 scene_doc = json.load(handle)
             if scene_doc.get("mode") == "facciata":
                 diagnostic["note"] = scene_doc.get("note")
+                diagnostic["upSource"] = scene_doc.get("upSource")
                 diagnostic["planes"] = scene_doc.get("planes")
                 diagnostic["skipped"] = scene_doc.get("skipped")
+                diagnostic["openings"] = scene_doc.get("openings")
             else:
                 diagnostic["room"] = scene_doc["dims"]
                 with open(os.path.join(work, "room_model.json"), encoding="utf-8") as handle:
@@ -191,10 +196,11 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
             with _timed(timings, "upload"):
                 outputs = _upload(project_id, out_dir)
         summary = _summary(project_id, sfm_info, report, out_dir, outputs, timings)
-        status.finish(
-            f"Completato: {sfm_info['registered']}/{sfm_info['total']} foto, RMS scala {report['rms_resid_mm']:.1f} mm",
-            timings,
-        )
+        finished = f"Completato: {sfm_info['registered']}/{sfm_info['total']} foto, RMS scala {report['rms_resid_mm']:.1f} mm"
+        if report.get("warning"):
+            finished = f"{finished}. {report['warning']}"
+            summary["scale"]["warning"] = report["warning"]
+        status.finish(finished, timings, warnings=[report["warning"]] if report.get("warning") else None)
         if upload:
             _upload_status(project_id, out_dir)
         summary["status"] = r2.result_key(project_id, "status.json") if upload else os.path.join(out_dir, "status.json")
@@ -312,15 +318,23 @@ def _weak_images(sparse_dir: str, pose: dict) -> set[str]:
     return weak
 
 
-def _camera_centres(sparse_dir: str):
+def _camera_poses(sparse_dir: str):
+    """Camera centres and image up (COLMAP camera Y points down)."""
     import numpy as np
     import pycolmap
 
     rec = pycolmap.Reconstruction(sparse_dir)
-    centres = [np.asarray(image.projection_center(), float) for image in rec.images.values() if image.has_pose]
+    centres = []
+    ups = []
+    for image in rec.images.values():
+        if not image.has_pose:
+            continue
+        centres.append(np.asarray(image.projection_center(), float))
+        rotation = np.asarray(image.cam_from_world().rotation.matrix(), float)
+        ups.append(-rotation[1, :])
     if not centres:
         raise PipelineError("planes", "Nessuna foto registrata per orientare le normali.")
-    return np.vstack(centres)
+    return np.vstack(centres), np.vstack(ups)
 
 
 def _load_cloud(path: str, mm_per_unit: float):
@@ -356,6 +370,7 @@ def _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, w
             "maxAbsResidMm": report["max_abs_resid_mm"],
             "nUsed": report["n_used"],
             "source": report["scale_source"],
+            "warning": report.get("warning"),
         },
         "overrides": options.room_overrides,
         "timingsSec": {k: round(v, 2) for k, v in timings.items()},

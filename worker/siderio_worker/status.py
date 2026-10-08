@@ -47,12 +47,14 @@ class StatusWriter:
         self.write()
         self._hook()
 
-    def finish(self, message: str, timings=None):
+    def finish(self, message: str, timings=None, warnings=None):
         self.data["ok"] = True
         self.data["error"] = None
         self.data["stage"] = "completato"
         self.data["progress"] = 100
         self.data["message"] = message
+        if warnings:
+            self.data["warnings"] = list(warnings)
         self.data["updatedAt"] = now_iso()
         if timings:
             self.data["timingsSec"] = {k: round(float(v), 2) for k, v in timings.items()}

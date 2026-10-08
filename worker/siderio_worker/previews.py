@@ -77,8 +77,19 @@ def _plan(room_mm: dict, path: str):
     draw.polygon(corners, outline=(20, 40, 60), width=4)
     if room_mm.get("mode") == "facciata":
         label = f"facciata {length:.0f} x {width:.0f} mm, profondità {float(dims['height_z']):.0f} mm"
-    else:
-        label = f"{length:.0f} x {width:.0f} mm, h {dims['height_z']:.0f} mm"
+        draw.text((pad, 24), label, fill=(20, 40, 60))
+        # The facade frame is already an elevation: X along the wall, Y up.
+        for opening in room_mm.get("openings") or []:
+            left, bottom = xy(float(opening["x0"]), float(opening["y0"]))
+            right, top = xy(float(opening["x1"]), float(opening["y1"]))
+            draw.rectangle(
+                [min(left, right), min(top, bottom), max(left, right), max(top, bottom)],
+                outline=(180, 60, 40),
+                width=6,
+            )
+        canvas.save(path)
+        return
+    label = f"{length:.0f} x {width:.0f} mm, h {dims['height_z']:.0f} mm"
     draw.text((pad, 24), label, fill=(20, 40, 60))
     for opening in room_mm.get("openings") or []:
         u0, u1 = float(opening["u0"]), float(opening["u1"])
@@ -108,11 +119,23 @@ def write_previews(out_dir: str, room_mm: dict):
         return written
     dims = room_mm["dims"]
     length, width, height = float(dims["length_x"]), float(dims["width_y"]), float(dims["height_z"])
-    centre = np.array([length / 2, width / 2, height / 3])
-    views = {
-        "preview_iso.png": (np.array([length * 1.5, -width * 0.7, height * 1.8]), centre, (0, 0, 1)),
-        "preview_top.png": (np.array([length / 2, width / 2 - max(width, 1) * 0.01, height * 2.4]), np.array([length / 2, width / 2, 0]), (0, 1, 0)),
-    }
+    if room_mm.get("mode") == "facciata":
+        # Y is up and Z points at the camera, so the wall reads upright.
+        centre = np.array([length / 2, width / 2, 0.0])
+        views = {
+            "preview_iso.png": (np.array([length * 0.15, width * 0.45, max(height, 1.0) * 1.35]), centre, (0, 1, 0)),
+            "preview_top.png": (
+                np.array([length / 2, width * 2.2, max(height, 1.0) * 0.35]),
+                np.array([length / 2, width / 2, max(height, 1.0) * 0.2]),
+                (0, 0, 1),
+            ),
+        }
+    else:
+        centre = np.array([length / 2, width / 2, height / 3])
+        views = {
+            "preview_iso.png": (np.array([length * 1.5, -width * 0.7, height * 1.8]), centre, (0, 0, 1)),
+            "preview_top.png": (np.array([length / 2, width / 2 - max(width, 1) * 0.01, height * 2.4]), np.array([length / 2, width / 2, 0]), (0, 1, 0)),
+        }
     for name, (eye, target, up) in views.items():
         rotation, translation = _look_at(eye, target, up)
         image = _splat(points, colors, rotation, translation, 960, 720, focal=700, radius=1)

@@ -230,7 +230,25 @@ def check_scale():
     assert rms > 0
     text = scale.render_markdown(report)
     assert "Millimetri per unità" in text
+    assert "incoerenti" not in text
+    assert report["warning"] is None
     assert abs(residual).sum() > 0
+    warned = scale.consistency_warning(
+        {
+            "measurements": [
+                {"pair": "A-B", "mm": 1200.0, "duplicate": False},
+                {"pair": "B-C", "mm": 2500.0, "duplicate": False},
+            ],
+            "leave_one_out": [
+                {"leftOut": "A-B", "predictedMm": 1364.8, "errMm": 164.8},
+                {"leftOut": "B-C", "predictedMm": 2198.1, "errMm": -301.9},
+            ],
+        }
+    )
+    assert warned and "incoerenti" in warned and ("13." in warned or "12." in warned), warned
+    assert scale.consistency_warning(
+        {"measurements": [{"pair": "A-B", "mm": 1000.0, "duplicate": False}], "leave_one_out": [{"leftOut": "A-B", "errMm": 10.0, "predictedMm": 1010.0}]}
+    ) is None
 
 
 def _span(plane, axis):
@@ -297,6 +315,8 @@ def check_facade():
     assert monitor["thicknessMm"] == 20.0
     assert any(item["reason"] == "estensione insufficiente" for item in scene["skipped"]), scene["skipped"]
     assert "Piano di fondo" in scene["note"]
+    assert scene["openings"] == []
+    assert not any(plane["type"] == "inclinato" for plane in scene["planes"])
     # The same cloud is not a room: facciata must not invent a floor.
     assert "floorMethod" not in scene
 
@@ -322,6 +342,8 @@ def check_facade():
     assert abs(looked_down["planes"][0]["normal"][2] - 1) < 1e-6
     assert any(plane["type"] == "orizzontale" for plane in looked_down["planes"])
 
+    check_outdoor_facade(rng)
+
     rng_noise = np.random.default_rng(4)
     noise = rng_noise.normal(size=(60, 3)) * 100
     noise_n = rng_noise.normal(size=(60, 3))
@@ -332,6 +354,81 @@ def check_facade():
         assert "pavimento" not in str(exc)
     else:
         raise AssertionError("a cloud without a plane should not become a facade")
+
+
+def check_outdoor_facade(rng):
+    """Tilted outdoor wall, ground, door recess, and a bad gravity prior."""
+    wall, wall_n = _grid(np.array([0.0, 0.0, 0.0]), np.array([7000.0, 0.0, 0.0]), np.array([0.0, 0.0, 2700.0]), 90, 40, [0.0, 1.0, 0.0], rng=rng)
+    hole = (wall[:, 0] > 2800) & (wall[:, 0] < 3700) & (wall[:, 2] < 2100)
+    parts = [(wall[~hole], wall_n[~hole])]
+    parts.append(_grid(np.array([2800.0, -140.0, 0.0]), np.array([900.0, 0.0, 0.0]), np.array([0.0, 0.0, 2100.0]), 14, 28, [0.0, 1.0, 0.0], noise=2, rng=rng))
+    parts.append(_grid(np.array([-200.0, 0.0, 0.0]), np.array([7400.0, 0.0, 0.0]), np.array([0.0, 3500.0, 0.0]), 48, 22, [0.0, 0.0, 1.0], rng=rng))
+    parts.append(_grid(np.array([6200.0, 350.0, 400.0]), np.array([700.0, 0.0, 0.0]), np.array([0.0, 0.0, 1600.0]), 10, 16, [0.45, 0.89, 0.0], noise=2, rng=rng))
+    roof_normal = np.array([0.0, 0.45, 0.89])
+    roof_normal = roof_normal / np.linalg.norm(roof_normal)
+    roof_v = np.cross(roof_normal, np.array([1.0, 0.0, 0.0]))
+    roof_v = roof_v / np.linalg.norm(roof_v) * 400.0
+    parts.append(_grid(np.array([400.0, 800.0, 2100.0]), np.array([500.0, 0.0, 0.0]), roof_v, 8, 8, roof_normal, noise=2, rng=rng))
+    points = np.vstack([item[0] for item in parts])
+    normals = np.vstack([item[1] for item in parts])
+    cameras = np.array(
+        [
+            [800.0, 4200.0, 1500.0],
+            [2500.0, 4500.0, 1550.0],
+            [4300.0, 3900.0, 1480.0],
+            [6100.0, 4700.0, 1600.0],
+        ]
+    )
+    ups = np.repeat([[0.0, 0.0, 1.0]], len(cameras), axis=0)
+    angle = np.radians(28)
+    cosine, sine = np.cos(angle), np.sin(angle)
+    rotation = np.array([[cosine, 0.0, sine], [0.0, 1.0, 0.0], [-sine, 0.0, cosine]])
+    points = points @ rotation.T
+    normals = normals @ rotation.T
+    cameras = cameras @ rotation.T
+    ups = ups @ rotation.T
+    bad_prior = np.array([0.96, 0.12, 0.18])
+    bad_prior = bad_prior / np.linalg.norm(bad_prior)
+    detected = facade.detect_facade(
+        points,
+        normals,
+        cameras,
+        mm_per_unit=1.0,
+        up_prior=bad_prior,
+        camera_ups=ups,
+        wall_thickness_mm=150.0,
+    )
+    scene = facade.to_millimetres(detected, 1.0)
+    wall_plane = scene["planes"][0]
+    assert wall_plane["role"] == "background", scene["note"]
+    assert abs(wall_plane["widthMm"] - 7000) < 400, wall_plane
+    assert abs(wall_plane["heightMm"] - 2700) < 350, wall_plane
+    assert wall_plane["thicknessMm"] == 150.0
+    assert scene["upSource"] in ("camere", "camere+terreno", "terreno"), scene["upSource"]
+    assert not any(plane["type"] == "inclinato" for plane in scene["planes"]), scene["planes"]
+    assert any(item.get("reason") == "inclinato" for item in scene["skipped"]), scene["skipped"]
+    ground = [plane for plane in scene["planes"] if plane["role"] == "terreno"]
+    assert len(ground) == 1, scene["planes"]
+    assert ground[0]["type"] == "orizzontale"
+    assert len(scene["openings"]) == 1, scene["openings"]
+    door = scene["openings"][0]
+    assert abs(door["widthMm"] - 900) < 200, door
+    assert 1700 < door["heightMm"] < 2400, door
+    assert door["y0"] < 400, door
+    kinds = sorted(plane["role"] for plane in scene["planes"])
+    print(
+        f"synthetic facade {wall_plane['widthMm']:.0f} x {wall_plane['heightMm']:.0f} mm, "
+        f"up {scene['upSource']}, door {door['widthMm']:.0f}x{door['heightMm']:.0f}, planes {kinds}"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        plan = os.path.join(tmp, "preview_plan.png")
+        previews._plan(scene, plan)
+        assert os.path.getsize(plan) > 500
+
+    # Same cloud without camera ups: the ground plane replaces the bad prior.
+    detected = facade.detect_facade(points, normals, cameras, mm_per_unit=1.0, up_prior=bad_prior, wall_thickness_mm=150.0)
+    assert detected["upSource"] == "terreno", detected["upSource"]
+    assert abs(detected["planes"][0]["width"] - 7000) < 400
 
 
 def check_imports_and_options():

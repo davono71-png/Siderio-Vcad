@@ -48,7 +48,9 @@ Il guscio della stanza è il bordo esterno di pavimento e soffitto. Un piano ver
 
 `options.mode` vale `stanza` (default) o `facciata`. Se `options.mode` manca, il worker legge `project.kind` da `project.json` (l’app lo scrive già: `stanza` o `facciata`). Un file senza quel campo resta una stanza.
 
-In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola: è il piano di fondo (la parete, spessore `wallThicknessMm`, faccia su Z=0, spessore verso la camera opposta) più le superfici piane davanti che hanno estensione reale, ciascuna una lastra da 20 mm. Un frammento piccolo viene elencato in `skipped` e non diventa un solido. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
+In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola. L'alto è la gravità del telefono, corretta con l'alto delle camere e con un piano di terra se la gravità non torna. Il piano di fondo è la facciata verticale più estesa rivolta verso le foto: lastra di spessore `wallThicknessMm`, faccia su Z=0, spessore dalla parte opposta alla camera. Davanti restano solo piani quasi verticali o quasi orizzontali (il terreno, se c'è, è facoltativo). Un piano inclinato entra solo se è grande e ben sostenuto; gli altri finiscono in `skipped`. Una porta, se il muro ha un vuoto o un piano arretrato delle giuste misure, è un'apertura tagliata nella lastra di fondo. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
+
+Se le quote si contraddicono (lasciandone una fuori l'errore supera il 5%), `diagnostic.json`, `status.json` (`warnings` e il messaggio) e il rapporto di scala riportano l'avviso.
 
 ```json
 {"input": {"projectId": "<uuid>", "options": {"mode": "facciata"}}}
@@ -173,7 +175,7 @@ python worker/test_local.py --project-id <uuid> --device cpu
 
 `--project-dir` legge `project.json` e le JPEG (`foto/001.jpg` oppure il nome del `r2Key`) e non carica nulla. `--project-id` scarica da R2 e carica `risultati/`.
 
-Lo smoke test di CI non ha GPU né COLMAP: importa i moduli ed esegue scala e pareti su una stanza sintetica (pavimento, soffitto, armadio arretrato, quadro, tavolo, porta) e su una facciata sintetica (muro, piano della scrivania, monitor, senza pavimento né soffitto).
+Lo smoke test di CI non ha GPU né COLMAP: importa i moduli ed esegue scala e pareti su una stanza sintetica (pavimento, soffitto, armadio arretrato, quadro, tavolo, porta) e su due facciate sintetiche (scrivania senza pavimento né soffitto; muro esterno inclinato, terreno, porta e un piano obliquo da scartare).
 
 ```bash
 pip install -r worker/requirements-smoke.txt

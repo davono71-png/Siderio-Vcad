@@ -74,7 +74,21 @@ def export_facade_step(scene_mm: dict, out_step: str):
         normal = _vec(plane["normal"])
         back = tuple(origin[i] - normal[i] * thickness for i in range(3))
         workplane = cq.Workplane(cq.Plane(back, tuple(axis_u), tuple(normal)))
-        shapes.append(workplane.box(width, height, thickness, centered=(False, False, False)).val())
+        solid = workplane.box(width, height, thickness, centered=(False, False, False)).val()
+        if plane.get("role") == "background":
+            for opening in scene_mm.get("openings") or []:
+                x0, x1 = float(opening["x0"]), float(opening["x1"])
+                y0, y1 = float(opening["y0"]), float(opening["y1"])
+                if x1 - x0 < 50 or y1 - y0 < 50:
+                    continue
+                cutter = (
+                    cq.Workplane("XY")
+                    .box(x1 - x0, y1 - y0, thickness + 40, centered=(False, False, False))
+                    .translate((x0, y0, -thickness - 10))
+                    .val()
+                )
+                solid = solid.cut(cutter)
+        shapes.append(solid)
         exported.append(
             {
                 "role": plane.get("role"),
