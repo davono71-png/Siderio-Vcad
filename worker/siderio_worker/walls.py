@@ -61,9 +61,15 @@ def export_facade_step(scene_mm: dict, out_step: str, extra_step: str | None = N
     """
     import cadquery as cq
 
+    from . import facade
+
+    recorded = facade.snap_scene_corners(scene_mm)
+    if recorded and not scene_mm.get("corners"):
+        scene_mm["corners"] = recorded
     planes = scene_mm.get("planes") or []
     wall_solids, wall_meta = _facade_solids(cq, [plane for plane in planes if in_walls_step(plane)], scene_mm.get("openings") or [])
-    wall_solids, wall_meta = _fuse_corner(wall_solids, wall_meta)
+    wall_solids, wall_meta, fuse_warning = _fuse_corner(wall_solids, wall_meta)
+    _record_corner_result(scene_mm, fuse_warning)
     if not wall_solids:
         raise RuntimeError("Nessun piano da scrivere nello STEP della facciata.")
     cq.exporters.export(cq.Compound.makeCompound(wall_solids), out_step)
@@ -141,14 +147,14 @@ def _fuse_corner(shapes, meta):
     background = next((index for index, item in enumerate(meta) if item.get("role") == "background"), None)
     ritorno = next((index for index, item in enumerate(meta) if item.get("role") == "ritorno"), None)
     if background is None or ritorno is None:
-        return shapes, meta
+        return shapes, meta, None
     try:
         merged = shapes[background].fuse(shapes[ritorno])
         parts = merged.Solids()
-    except Exception:
-        return shapes, meta
+    except Exception as exc:
+        return shapes, meta, f"Unione angolo non riuscita: {exc}"
     if len(parts) != 1:
-        return shapes, meta
+        return shapes, meta, "Unione angolo non riuscita: i solidi non si intersecano."
     kept = []
     kept_meta = []
     for index, (shape, item) in enumerate(zip(shapes, meta)):
@@ -160,7 +166,20 @@ def _fuse_corner(shapes, meta):
         else:
             kept.append(shape)
             kept_meta.append(item)
-    return kept, kept_meta
+    return kept, kept_meta, None
+
+
+def _record_corner_result(scene_mm, fuse_warning):
+    corners = scene_mm.get("corners") or []
+    if not corners:
+        return
+    if fuse_warning:
+        scene_mm.setdefault("warnings", []).append(fuse_warning)
+        action = "snapped+fuse-failed"
+    else:
+        action = "snapped+fused"
+    for corner in corners:
+        corner["action"] = action
 
 
 def _vec(values):

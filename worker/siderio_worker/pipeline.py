@@ -187,6 +187,9 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 diagnostic["skipped"] = scene_doc.get("skipped")
                 diagnostic["openings"] = scene_doc.get("openings")
                 diagnostic["lacune"] = scene_doc.get("lacune")
+                diagnostic["corners"] = scene_doc.get("corners")
+                if scene_doc.get("warnings"):
+                    diagnostic["warnings"] = scene_doc.get("warnings")
             else:
                 diagnostic["room"] = scene_doc["dims"]
                 with open(os.path.join(work, "room_model.json"), encoding="utf-8") as handle:
@@ -203,10 +206,13 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 outputs = _upload(project_id, out_dir)
         summary = _summary(project_id, sfm_info, report, out_dir, outputs, timings)
         finished = f"Completato: {sfm_info['registered']}/{sfm_info['total']} foto, RMS scala {report['rms_resid_mm']:.1f} mm"
+        warnings = [report["warning"]] if report.get("warning") else []
         if report.get("warning"):
             finished = f"{finished}. {report['warning']}"
             summary["scale"]["warning"] = report["warning"]
-        status.finish(finished, timings, warnings=[report["warning"]] if report.get("warning") else None)
+        if "room_mm" in locals():
+            warnings.extend(room_mm.get("warnings") or [])
+        status.finish(finished, timings, warnings=warnings or None)
         if upload:
             _upload_status(project_id, out_dir)
         summary["status"] = r2.result_key(project_id, "status.json") if upload else os.path.join(out_dir, "status.json")

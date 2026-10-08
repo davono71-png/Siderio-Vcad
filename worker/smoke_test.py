@@ -800,6 +800,110 @@ def check_corner_join():
     )
 
 
+def check_v6_corner_export():
+    """The v6 RunPod planes, through the production STEP export.
+
+    Gap 225 mm and the return 160 mm in front of the face. At the job scale the
+    return is only 0.24 model units thick, which used to skip the snap.
+    """
+    scale = 625.060147718
+    scene = _v6_scene()
+    internal = [facade._plane_from_mm(plane) for plane in scene["planes"]]
+    for plane in internal:
+        for key in ("origin", "center"):
+            plane[key] = [value / scale for value in plane[key]]
+        plane["width"] /= scale
+        plane["height"] /= scale
+        plane["thickness"] /= scale
+    assert internal[2]["thickness"] < 1.0
+    corners = facade._join_corner(internal, scale, 20.0)
+    assert corners and corners[0]["end"] == "right", corners
+    assert abs(corners[0]["gapMm"] - 225.3) < 1, corners
+    assert abs(corners[0]["offsetMm"] - 160.4) < 1, corners
+    wall_end = (internal[0]["origin"][0] + internal[0]["width"]) * scale
+    assert abs(wall_end - 8221.6) < 1, wall_end
+    try:
+        import cadquery as cq
+    except ImportError:
+        print("v6 corner without cadquery")
+        return
+    fresh = _v6_scene()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "walls.step")
+        info = walls.export_facade_step(fresh, path)
+        assert len(info["solids"]) == 2, info["solids"]
+        assert info["solids"][0].get("joined") == "ritorno"
+        assert fresh["corners"][0]["action"] == "snapped+fused"
+        assert abs(fresh["corners"][0]["gapMm"] - 225.3) < 1
+        assert abs(fresh["corners"][0]["offsetMm"] - 160.4) < 1
+        assert not fresh.get("warnings")
+        model = cq.importers.importStep(path)
+        solids = model.solids().vals()
+    assert len(solids) == 2, len(solids)
+    box = solids[0].BoundingBox()
+    assert abs(box.xmin) < 1 and abs(box.xmax - 8221.6) < 2, (box.xmin, box.xmax)
+    assert abs(box.zmin - (-150)) < 2 and box.zmax > 2600, (box.zmin, box.zmax)
+    assert abs(box.ymin) < 1
+    assert solids[0].isInside((8000.0, 1400.0, -75.0), tolerance=1.0)
+    assert solids[0].isInside((8140.0, 1400.0, -75.0), tolerance=1.0)
+    assert solids[0].isInside((8140.0, 1400.0, 400.0), tolerance=1.0)
+    assert not solids[0].isInside((3400.0, 1000.0, -75.0), tolerance=1.0)
+    print(
+        f"v6 export L x {box.xmin:.0f}..{box.xmax:.0f} z {box.zmin:.0f}..{box.zmax:.0f}, "
+        f"gap {fresh['corners'][0]['gapMm']} offset {fresh['corners'][0]['offsetMm']}"
+    )
+
+
+def _v6_scene():
+    """Planes written by job a27906b8, before the corner was closed."""
+    return {
+        "mode": "facciata",
+        "units": "mm",
+        "planes": [
+            {
+                "role": "background",
+                "type": "facciata",
+                "widthMm": 7846.3,
+                "heightMm": 2884.9,
+                "thicknessMm": 150.0,
+                "originMm": [0.0, 0.0, 0.0],
+                "centerMm": [3923.2, 1442.5, 0.0],
+                "axisU": [1.0, 0.0, 0.0],
+                "axisV": [0.0, 1.0, 0.0],
+                "normal": [0.0, 0.0, 1.0],
+                "step": "walls",
+            },
+            {
+                "role": "terreno",
+                "type": "orizzontale",
+                "widthMm": 8221.6,
+                "heightMm": 2777.3,
+                "thicknessMm": 20.0,
+                "originMm": [8221.6, 0.0, -150.0],
+                "centerMm": [4110.8, 0.0, 1238.7],
+                "axisU": [-1.0, 0.0, 0.0],
+                "axisV": [0.0, 0.0, 1.0],
+                "normal": [0.0, 1.0, 0.0],
+                "step": "walls",
+            },
+            {
+                "role": "ritorno",
+                "type": "verticale",
+                "widthMm": 2466.9,
+                "heightMm": 2884.9,
+                "thicknessMm": 150.0,
+                "originMm": [8071.6, 0.0, 160.4],
+                "centerMm": [8071.6, 1442.5, 1393.9],
+                "axisU": [0.0, 0.0, 1.0],
+                "axisV": [0.0, 1.0, 0.0],
+                "normal": [-1.0, 0.0, 0.0],
+                "step": "walls",
+            },
+        ],
+        "openings": [{"kind": "door", "x0": 2853.2, "x1": 3962.8, "y0": 0.0, "y1": 2064.1}],
+    }
+
+
 def check_step():
     try:
         import cadquery  # noqa: F401
@@ -825,6 +929,7 @@ def main():
     check_facade()
     check_real_facade_fixture()
     check_corner_join()
+    check_v6_corner_export()
     check_step()
     print("smoke ok")
 

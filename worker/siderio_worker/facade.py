@@ -94,7 +94,7 @@ def detect_facade(
     move = move + _seat_floor(planes)
     _raise_wall_to_floor(planes)
     _shift_openings(list(openings) + list(lacune), move)
-    _join_corner(planes, mm_per_unit, span)
+    corners = _join_corner(planes, mm_per_unit, span)
     floor_y = float(background["origin"][1])
     for item in openings:
         if item.get("kind") == "door":
@@ -117,6 +117,7 @@ def detect_facade(
         "skipped": skipped,
         "openings": openings,
         "lacune": lacune,
+        "corners": corners,
         "note": _note(fronts, skipped, openings, lacune),
     }
 
@@ -177,6 +178,7 @@ def to_millimetres(scene: dict, mm_per_unit: float) -> dict:
         "skipped": list(scene.get("skipped") or []),
         "openings": [opening_mm(item) for item in scene.get("openings") or []],
         "lacune": [opening_mm(item) for item in scene.get("lacune") or []],
+        "corners": [dict(item) for item in scene.get("corners") or []],
         "transform_colmap_to_room_mm": (np.diag([scale, scale, scale, 1.0]) @ np.asarray(scene["transform_colmap_to_room"], float)).tolist(),
     }
 
@@ -1294,37 +1296,111 @@ def _retarget_solid(plane, x=None, y=None, z=None):
     _write_frame(plane, back, edges)
 
 
+def snap_scene_corners(scene_mm) -> list:
+    """Close corners on an exported millimetre scene. Returns the pre-snap gaps."""
+    planes = scene_mm.get("planes") or []
+    linked = []
+    for plane in planes:
+        if "originMm" not in plane:
+            continue
+        linked.append((plane, _plane_from_mm(plane)))
+    corners = _join_corner([item[1] for item in linked], 1.0, 8000.0)
+    for plane, internal in linked:
+        _plane_to_mm(plane, internal)
+    return corners
+
+
+def _plane_from_mm(plane) -> dict:
+    return {
+        "role": plane.get("role"),
+        "step": plane.get("step"),
+        "type": plane.get("type"),
+        "width": float(plane["widthMm"]),
+        "height": float(plane["heightMm"]),
+        "thickness": float(plane["thicknessMm"]),
+        "origin": [float(v) for v in plane["originMm"]],
+        "center": [float(v) for v in plane.get("centerMm") or plane["originMm"]],
+        "axisU": [float(v) for v in plane["axisU"]],
+        "axisV": [float(v) for v in plane["axisV"]],
+        "normal": [float(v) for v in plane["normal"]],
+    }
+
+
+def _plane_to_mm(plane, internal):
+    plane["widthMm"] = round(float(internal["width"]), 1)
+    plane["heightMm"] = round(float(internal["height"]), 1)
+    plane["thicknessMm"] = round(float(internal["thickness"]), 1)
+    plane["originMm"] = [round(float(v), 1) for v in internal["origin"]]
+    plane["centerMm"] = [round(float(v), 1) for v in internal["center"]]
+    plane["axisU"] = [round(float(v), 6) for v in internal["axisU"]]
+    plane["axisV"] = [round(float(v), 6) for v in internal["axisV"]]
+    plane["normal"] = [round(float(v), 6) for v in internal["normal"]]
+
+
 def _join_corner(planes, mm_per_unit, span):
     """Close the corner: return flush with the wall end, both standing on Y=0.
 
-    A return whose near end is within about 400 mm of a wall end is extended
-    or trimmed so its outer face is that end and the two overlap by the
-    thickness. Bottoms go to the floor. Heights within about 100 mm share the
-    taller one. The floor then runs from the wall start to that outer face
-    and at least as deep as the return.
+    The gate is only that the return is the perpendicular wall at that end and
+    its near face is within about 600 mm. Lengths use the cloud scale, so a
+    150 mm slab is never rejected for being thinner than one model unit.
+    Bottoms go to the floor. Heights within about 100 mm share the taller one.
+    The floor then runs from the wall start to the return's outer face and at
+    least as deep as the return.
     """
     background = next((plane for plane in planes if plane.get("role") == "background"), None)
     if background is None:
-        return
+        return []
     ritorno = next((plane for plane in planes if plane.get("role") == "ritorno" and plane.get("step") == "walls"), None)
-    if ritorno is not None:
-        _flush_return(background, ritorno, _mu(400.0, mm_per_unit, span))
+    corners = []
+    if ritorno is not None and _return_at_end(background, ritorno, _mu(600.0, mm_per_unit, span)):
+        corners.append(_corner_report(background, ritorno, mm_per_unit))
+        _flush_return(background, ritorno)
     _seat_wall_bottom(background)
     if ritorno is not None:
         _seat_wall_bottom(ritorno)
         _match_wall_heights(background, ritorno, _mu(100.0, mm_per_unit, span))
     _span_floor(planes, background, ritorno)
+    return corners
 
 
-def _flush_return(background, ritorno, tolerance):
+def _return_at_end(background, ritorno, tolerance) -> bool:
     bg0, bg1 = _solid_aabb(background)
     rt0, rt1 = _solid_aabb(ritorno)
     dist_right = abs(float(rt0[0] - bg1[0]))
     dist_left = abs(float(rt1[0] - bg0[0]))
-    if min(dist_right, dist_left) > tolerance:
-        return
+    return min(dist_right, dist_left) <= tolerance
+
+
+def _corner_report(background, ritorno, mm_per_unit) -> dict:
+    """Gap and Z offset before the slabs are moved, in millimetres."""
+    scale = float(mm_per_unit) if mm_per_unit and float(mm_per_unit) > 0 else 1.0
+    bg0, bg1 = _solid_aabb(background)
+    rt0, rt1 = _solid_aabb(ritorno)
+    dist_right = abs(float(rt0[0] - bg1[0]))
+    dist_left = abs(float(rt1[0] - bg0[0]))
+    if dist_right <= dist_left:
+        end = "right"
+        gap = max(0.0, float(rt0[0] - bg1[0]))
+    else:
+        end = "left"
+        gap = max(0.0, float(bg0[0] - rt1[0]))
+    # Wall face is the camera side. A positive offset means the return starts in front of it.
+    offset = max(0.0, float(rt0[2] - bg1[2]))
+    return {
+        "end": end,
+        "gapMm": round(gap * scale, 1),
+        "offsetMm": round(offset * scale, 1),
+        "action": "snapped",
+    }
+
+
+def _flush_return(background, ritorno):
+    bg0, bg1 = _solid_aabb(background)
+    rt0, rt1 = _solid_aabb(ritorno)
+    dist_right = abs(float(rt0[0] - bg1[0]))
+    dist_left = abs(float(rt1[0] - bg0[0]))
     thick = float(rt1[0] - rt0[0])
-    if thick < 1.0:
+    if thick <= 1e-9:
         return
     if dist_right <= dist_left:
         outer = float(rt1[0])
