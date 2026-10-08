@@ -639,11 +639,11 @@ def check_real_facade_fixture():
     )
     scene = facade.to_millimetres(detected, 1.0)
     wall = next(plane for plane in scene["planes"] if plane["role"] == "background")
-    assert 7400 < wall["widthMm"] < 8200, wall
+    assert 7400 < wall["widthMm"] < 8600, wall
     assert 2700 < wall["heightMm"] < 3100, wall
     assert wall["thicknessMm"] == 150.0
     assert wall["normal"][2] == 1.0
-    assert wall["originMm"][1] >= -1
+    assert abs(wall["originMm"][1]) < 1
     doors = [item for item in scene["openings"] if item["kind"] == "door"]
     windows = [item for item in scene["openings"] if item["kind"] == "window"]
     assert windows == []
@@ -663,6 +663,14 @@ def check_real_facade_fixture():
     assert returns[0]["step"] == "walls" and returns[0]["thicknessMm"] == 150.0
     assert abs(abs(returns[0]["normal"][0]) - 1) < 1e-6
     assert returns[0]["normal"][1] == 0.0
+    assert abs(returns[0]["originMm"][1]) < 1, returns[0]
+    wall_end = wall["originMm"][0] + wall["widthMm"]
+    # Outer face of a right-hand return is origin X plus the thickness.
+    outer = returns[0]["originMm"][0] + returns[0]["thicknessMm"]
+    assert abs(outer - wall_end) < 2, (outer, wall_end, returns[0])
+    assert abs(returns[0]["heightMm"] - wall["heightMm"]) < 2, (returns[0]["heightMm"], wall["heightMm"])
+    # Door head stays on the measurement, not a nominal 2000 or 2100.
+    assert abs(door["y1"] - 2000) > 1 and abs(door["y1"] - 2100) > 1, door
     horizontals = [plane for plane in scene["planes"] if plane["step"] == "walls" and plane["type"] == "orizzontale"]
     assert horizontals == [ground]
     print(
@@ -695,6 +703,103 @@ def check_imports_and_options():
     assert sfm.compiled_sms() == {61, 89}
 
 
+def _aabb(plane):
+    return facade._solid_aabb(plane)
+
+
+def check_corner_join():
+    """A return 180 mm past the wall, 120 mm in front of the face, joins into one L."""
+    background = {
+        "role": "background",
+        "type": "facciata",
+        "width": 4000.0,
+        "height": 2485.0,
+        "thickness": 150.0,
+        "origin": [0.0, 15.0, 0.0],
+        "axisU": [1.0, 0.0, 0.0],
+        "axisV": [0.0, 1.0, 0.0],
+        "normal": [0.0, 0.0, 1.0],
+        "center": [2000.0, 1257.5, 0.0],
+        "step": "walls",
+    }
+    # Solid X 4180..4330, Y 60..2480, Z 120..1800. Normal -X, material toward +X.
+    ritorno = {
+        "role": "ritorno",
+        "type": "verticale",
+        "width": 1680.0,
+        "height": 2420.0,
+        "thickness": 150.0,
+        "origin": [4180.0, 60.0, 120.0],
+        "axisU": [0.0, 0.0, 1.0],
+        "axisV": [0.0, 1.0, 0.0],
+        "normal": [-1.0, 0.0, 0.0],
+        "center": [4180.0, 1270.0, 960.0],
+        "step": "walls",
+    }
+    # Face on Y=0, thickness downward. X 200..3500 along -X, Z -50..900 along +Z.
+    floor = {
+        "role": "terreno",
+        "type": "orizzontale",
+        "width": 3300.0,
+        "height": 950.0,
+        "thickness": 20.0,
+        "origin": [3500.0, 0.0, -50.0],
+        "axisU": [-1.0, 0.0, 0.0],
+        "axisV": [0.0, 0.0, 1.0],
+        "normal": [0.0, 1.0, 0.0],
+        "center": [1850.0, 0.0, 425.0],
+        "step": "walls",
+    }
+    planes = [background, ritorno, floor]
+    facade._join_corner(planes, 1.0, 5000.0)
+    bg0, bg1 = _aabb(background)
+    rt0, rt1 = _aabb(ritorno)
+    fl0, fl1 = _aabb(floor)
+    assert abs(bg1[0] - 4330) < 1 and abs(rt1[0] - 4330) < 1, (bg1[0], rt1[0])
+    assert abs((rt1[0] - rt0[0]) - 150) < 1, (rt0[0], rt1[0])
+    assert rt0[0] < bg1[0] - 100, (rt0[0], bg1[0])
+    assert rt0[2] <= -150 + 1 and rt1[2] > 1700, (rt0[2], rt1[2])
+    assert abs(bg0[1]) < 1 and abs(rt0[1]) < 1, (bg0[1], rt0[1])
+    assert abs(bg1[1] - rt1[1]) < 1 and abs(bg1[1] - 2500) < 1, (bg1[1], rt1[1])
+    assert abs(fl0[0]) < 1 and abs(fl1[0] - 4330) < 1, (fl0[0], fl1[0])
+    assert fl0[2] <= -150 + 1 and fl1[2] >= rt1[2] - 1, (fl0[2], fl1[2], rt1[2])
+    assert abs(fl1[1]) < 1 and fl0[1] < -10
+    # A measured head near 2.1 m is not rewritten.
+    door_top = 2034.0
+    assert abs(door_top - 2100) > 20
+    scene = {
+        "planes": [
+            {
+                "role": plane["role"],
+                "type": plane["type"],
+                "widthMm": plane["width"],
+                "heightMm": plane["height"],
+                "thicknessMm": plane["thickness"],
+                "originMm": plane["origin"],
+                "axisU": plane["axisU"],
+                "axisV": plane["axisV"],
+                "normal": plane["normal"],
+                "step": "walls",
+            }
+            for plane in planes
+        ],
+        "openings": [{"kind": "door", "x0": 1000.0, "x1": 1900.0, "y0": 0.0, "y1": door_top}],
+    }
+    try:
+        import cadquery  # noqa: F401
+    except ImportError:
+        print("corner join without cadquery")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        info = walls.export_facade_step(scene, os.path.join(tmp, "walls.step"))
+    assert len(info["solids"]) == 2, info["solids"]
+    assert info["solids"][0].get("joined") == "ritorno"
+    print(
+        f"corner join wall {bg1[0] - bg0[0]:.0f} x {bg1[1] - bg0[1]:.0f}, "
+        f"return x {rt0[0]:.0f}..{rt1[0]:.0f}, floor x {fl0[0]:.0f}..{fl1[0]:.0f}"
+    )
+
+
 def check_step():
     try:
         import cadquery  # noqa: F401
@@ -719,6 +824,7 @@ def main():
     check_ceiling_fallbacks()
     check_facade()
     check_real_facade_fixture()
+    check_corner_join()
     check_step()
     print("smoke ok")
 

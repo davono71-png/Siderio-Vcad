@@ -94,9 +94,11 @@ def detect_facade(
     move = move + _seat_floor(planes)
     _raise_wall_to_floor(planes)
     _shift_openings(list(openings) + list(lacune), move)
+    _join_corner(planes, mm_per_unit, span)
     floor_y = float(background["origin"][1])
     for item in openings:
         if item.get("kind") == "door":
+            # The head stays where it was measured. A door near 2.0–2.1 m is not rounded.
             item["y0"] = floor_y
     dims = _dims(planes)
     transform = np.eye(4)
@@ -1221,6 +1223,164 @@ def _seat_floor(planes):
         plane["origin"] = [float(v) for v in origin]
         plane["center"] = [float(v) for v in center]
     return move
+
+
+def _solid_frame(plane):
+    """Box frame: back corner, then edges along U, V and the outward normal."""
+    origin = np.asarray(plane["origin"], float)
+    normal = np.asarray(plane["normal"], float)
+    thickness = float(plane["thickness"])
+    back = origin - normal * thickness
+    edges = [
+        np.asarray(plane["axisU"], float) * float(plane["width"]),
+        np.asarray(plane["axisV"], float) * float(plane["height"]),
+        normal * thickness,
+    ]
+    return back, edges
+
+
+def _aabb_from_frame(back, edges):
+    corners = []
+    for u in (0.0, 1.0):
+        for v in (0.0, 1.0):
+            for t in (0.0, 1.0):
+                corners.append(back + edges[0] * u + edges[1] * v + edges[2] * t)
+    stacked = np.vstack(corners)
+    return stacked.min(0), stacked.max(0)
+
+
+def _solid_aabb(plane):
+    return _aabb_from_frame(*_solid_frame(plane))
+
+
+def _write_frame(plane, back, edges):
+    width = float(np.linalg.norm(edges[0]))
+    height = float(np.linalg.norm(edges[1]))
+    thickness = float(np.linalg.norm(edges[2]))
+    if width < 1e-6 or height < 1e-6 or thickness < 1e-6:
+        return
+    axis_u = edges[0] / width
+    axis_v = edges[1] / height
+    normal = edges[2] / thickness
+    origin = back + edges[2]
+    plane["origin"] = [float(v) for v in origin]
+    plane["axisU"] = [float(v) for v in axis_u]
+    plane["axisV"] = [float(v) for v in axis_v]
+    plane["normal"] = [float(v) for v in normal]
+    plane["width"] = width
+    plane["height"] = height
+    plane["thickness"] = thickness
+    center = origin + axis_u * (width / 2.0) + axis_v * (height / 2.0)
+    plane["center"] = [float(v) for v in center]
+
+
+def _retarget_solid(plane, x=None, y=None, z=None):
+    """Move one side of an axis-aligned slab. The other two axes stay put."""
+    back, edges = _solid_frame(plane)
+    for axis, span in enumerate((x, y, z)):
+        if span is None:
+            continue
+        lo, hi = float(span[0]), float(span[1])
+        if hi < lo:
+            lo, hi = hi, lo
+        index = max(range(3), key=lambda i: abs(float(edges[i][axis])))
+        edge = edges[index]
+        if abs(float(edge[axis])) < 1e-8:
+            continue
+        sign = 1.0 if edge[axis] >= 0 else -1.0
+        edges[index] = edge * ((hi - lo) / abs(float(edge[axis])))
+        back = back.copy()
+        back[axis] = lo if sign > 0 else hi
+    _write_frame(plane, back, edges)
+
+
+def _join_corner(planes, mm_per_unit, span):
+    """Close the corner: return flush with the wall end, both standing on Y=0.
+
+    A return whose near end is within about 400 mm of a wall end is extended
+    or trimmed so its outer face is that end and the two overlap by the
+    thickness. Bottoms go to the floor. Heights within about 100 mm share the
+    taller one. The floor then runs from the wall start to that outer face
+    and at least as deep as the return.
+    """
+    background = next((plane for plane in planes if plane.get("role") == "background"), None)
+    if background is None:
+        return
+    ritorno = next((plane for plane in planes if plane.get("role") == "ritorno" and plane.get("step") == "walls"), None)
+    if ritorno is not None:
+        _flush_return(background, ritorno, _mu(400.0, mm_per_unit, span))
+    _seat_wall_bottom(background)
+    if ritorno is not None:
+        _seat_wall_bottom(ritorno)
+        _match_wall_heights(background, ritorno, _mu(100.0, mm_per_unit, span))
+    _span_floor(planes, background, ritorno)
+
+
+def _flush_return(background, ritorno, tolerance):
+    bg0, bg1 = _solid_aabb(background)
+    rt0, rt1 = _solid_aabb(ritorno)
+    dist_right = abs(float(rt0[0] - bg1[0]))
+    dist_left = abs(float(rt1[0] - bg0[0]))
+    if min(dist_right, dist_left) > tolerance:
+        return
+    thick = float(rt1[0] - rt0[0])
+    if thick < 1.0:
+        return
+    if dist_right <= dist_left:
+        outer = float(rt1[0])
+        _retarget_solid(background, x=(float(bg0[0]), outer))
+        _retarget_solid(ritorno, x=(outer - thick, outer))
+    else:
+        outer = float(rt0[0])
+        _retarget_solid(background, x=(outer, float(bg1[0])))
+        _retarget_solid(ritorno, x=(outer, outer + thick))
+    bg0, bg1 = _solid_aabb(background)
+    rt0, rt1 = _solid_aabb(ritorno)
+    # The return must pass through the wall thickness, not stop in front of the face.
+    if float(rt0[2] + rt1[2]) >= float(bg0[2] + bg1[2]):
+        _retarget_solid(ritorno, z=(min(float(rt0[2]), float(bg0[2])), float(rt1[2])))
+    else:
+        _retarget_solid(ritorno, z=(float(rt0[2]), max(float(rt1[2]), float(bg1[2]))))
+
+
+def _seat_wall_bottom(plane):
+    """The slab stands on the floor. The measured top stays."""
+    lo, hi = _solid_aabb(plane)
+    if float(hi[1]) <= 0.0:
+        return
+    _retarget_solid(plane, y=(0.0, float(hi[1])))
+
+
+def _match_wall_heights(background, ritorno, tolerance):
+    bg0, bg1 = _solid_aabb(background)
+    rt0, rt1 = _solid_aabb(ritorno)
+    bg_h = float(bg1[1] - bg0[1])
+    rt_h = float(rt1[1] - rt0[1])
+    if abs(bg_h - rt_h) > tolerance:
+        return
+    top = max(float(bg1[1]), float(rt1[1]))
+    _retarget_solid(background, y=(0.0, top))
+    _retarget_solid(ritorno, y=(0.0, top))
+
+
+def _span_floor(planes, background, ritorno):
+    floor = next((plane for plane in planes if plane.get("role") == "terreno"), None)
+    if floor is None:
+        return
+    bg0, bg1 = _solid_aabb(background)
+    f0, f1 = _solid_aabb(floor)
+    x0, x1 = float(bg0[0]), float(bg1[0])
+    z0, z1 = float(f0[2]), float(f1[2])
+    if ritorno is not None:
+        rt0, rt1 = _solid_aabb(ritorno)
+        mid = 0.5 * (x0 + x1)
+        if float(rt1[0]) >= mid:
+            x1 = max(x1, float(rt1[0]))
+        else:
+            x0 = min(x0, float(rt0[0]))
+        z0 = min(z0, float(rt0[2]), float(bg0[2]))
+        z1 = max(z1, float(rt1[2]), float(bg1[2]))
+    _retarget_solid(floor, x=(x0, x1), z=(z0, z1))
 
 
 def _raise_wall_to_floor(planes):

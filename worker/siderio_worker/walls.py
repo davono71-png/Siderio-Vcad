@@ -63,6 +63,7 @@ def export_facade_step(scene_mm: dict, out_step: str, extra_step: str | None = N
 
     planes = scene_mm.get("planes") or []
     wall_solids, wall_meta = _facade_solids(cq, [plane for plane in planes if in_walls_step(plane)], scene_mm.get("openings") or [])
+    wall_solids, wall_meta = _fuse_corner(wall_solids, wall_meta)
     if not wall_solids:
         raise RuntimeError("Nessun piano da scrivere nello STEP della facciata.")
     cq.exporters.export(cq.Compound.makeCompound(wall_solids), out_step)
@@ -133,6 +134,33 @@ def _facade_solids(cq, planes, openings):
             }
         )
     return shapes, exported
+
+
+def _fuse_corner(shapes, meta):
+    """One L-shaped body when the return actually intersects the background."""
+    background = next((index for index, item in enumerate(meta) if item.get("role") == "background"), None)
+    ritorno = next((index for index, item in enumerate(meta) if item.get("role") == "ritorno"), None)
+    if background is None or ritorno is None:
+        return shapes, meta
+    try:
+        merged = shapes[background].fuse(shapes[ritorno])
+        parts = merged.Solids()
+    except Exception:
+        return shapes, meta
+    if len(parts) != 1:
+        return shapes, meta
+    kept = []
+    kept_meta = []
+    for index, (shape, item) in enumerate(zip(shapes, meta)):
+        if index == ritorno:
+            continue
+        if index == background:
+            kept.append(parts[0])
+            kept_meta.append({**item, "joined": "ritorno"})
+        else:
+            kept.append(shape)
+            kept_meta.append(item)
+    return kept, kept_meta
 
 
 def _vec(values):
