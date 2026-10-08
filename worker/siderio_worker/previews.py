@@ -106,6 +106,19 @@ def _plan(room_mm: dict, path: str):
     canvas.save(path)
 
 
+def facade_views(length, width, height):
+    """Cameras for a facade whose vertical axis is Y and whose wall faces +Z."""
+    centre = np.array([length / 2.0, width / 2.0, 0.0])
+    return {
+        "preview_iso.png": (np.array([length * 0.15, width * 0.45, max(height, 1.0) * 1.35]), centre, (0.0, 1.0, 0.0)),
+        "preview_top.png": (
+            np.array([length / 2.0, width * 2.2, max(height, 1.0) * 0.35]),
+            np.array([length / 2.0, width / 2.0, max(height, 1.0) * 0.2]),
+            (0.0, 0.0, 1.0),
+        ),
+    }
+
+
 def write_previews(out_dir: str, room_mm: dict):
     dense = os.path.join(out_dir, "room_dense.ply")
     written = []
@@ -120,16 +133,7 @@ def write_previews(out_dir: str, room_mm: dict):
     dims = room_mm["dims"]
     length, width, height = float(dims["length_x"]), float(dims["width_y"]), float(dims["height_z"])
     if room_mm.get("mode") == "facciata":
-        # Y is up and Z points at the camera, so the wall reads upright.
-        centre = np.array([length / 2, width / 2, 0.0])
-        views = {
-            "preview_iso.png": (np.array([length * 0.15, width * 0.45, max(height, 1.0) * 1.35]), centre, (0, 1, 0)),
-            "preview_top.png": (
-                np.array([length / 2, width * 2.2, max(height, 1.0) * 0.35]),
-                np.array([length / 2, width / 2, max(height, 1.0) * 0.2]),
-                (0, 0, 1),
-            ),
-        }
+        views = facade_views(length, width, height)
     else:
         centre = np.array([length / 2, width / 2, height / 3])
         views = {

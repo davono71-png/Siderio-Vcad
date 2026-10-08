@@ -343,6 +343,7 @@ def check_facade():
     assert any(plane["type"] == "orizzontale" for plane in looked_down["planes"])
 
     check_outdoor_facade(rng)
+    check_zup_facade(rng)
 
     rng_noise = np.random.default_rng(4)
     noise = rng_noise.normal(size=(60, 3)) * 100
@@ -404,7 +405,12 @@ def check_outdoor_facade(rng):
     assert abs(wall_plane["widthMm"] - 7000) < 400, wall_plane
     assert abs(wall_plane["heightMm"] - 2700) < 350, wall_plane
     assert wall_plane["thicknessMm"] == 150.0
-    assert scene["upSource"] in ("camere", "camere+terreno", "terreno"), scene["upSource"]
+    assert scene["upAxis"] == "Y"
+    assert "Asse verticale: Y" in scene["convention"]
+    true_up = np.array([sine, 0.0, cosine])
+    frame = np.asarray(detected["transform_colmap_to_room"], float)[:3, :3]
+    assert float(frame[1] @ true_up) > 0.95, frame[1]
+    assert scene["upSource"] in ("camere", "camere+terreno", "terreno", "gravita+terreno"), scene["upSource"]
     assert not any(plane["type"] == "inclinato" for plane in scene["planes"]), scene["planes"]
     assert any(item.get("reason") == "inclinato" for item in scene["skipped"]), scene["skipped"]
     ground = [plane for plane in scene["planes"] if plane["role"] == "terreno"]
@@ -429,6 +435,99 @@ def check_outdoor_facade(rng):
     detected = facade.detect_facade(points, normals, cameras, mm_per_unit=1.0, up_prior=bad_prior, wall_thickness_mm=150.0)
     assert detected["upSource"] == "terreno", detected["upSource"]
     assert abs(detected["planes"][0]["width"] - 7000) < 400
+
+
+def check_zup_facade(rng=None):
+    rng = np.random.default_rng(11)
+    """Z-up cloud, the COLMAP room convention, with a sideways camera axis.
+
+    Gravity is +Z. Portrait JPEGs without EXIF rotation report camera Y along
+    +X. The wall must stay the background, Y must be the exported up axis,
+    and the door and window must be cut.
+    """
+    wall, wall_n = _grid(
+        np.array([0.0, 0.0, 0.0]),
+        np.array([3500.0, 0.0, 0.0]),
+        np.array([0.0, 0.0, 2200.0]),
+        80,
+        48,
+        [0.0, 1.0, 0.0],
+        rng=rng,
+    )
+    door_hole = (wall[:, 0] > 1100) & (wall[:, 0] < 1700) & (wall[:, 2] < 2000)
+    window_hole = (wall[:, 0] > 1900) & (wall[:, 0] < 2400) & (wall[:, 2] > 900) & (wall[:, 2] < 1700)
+    keep = ~door_hole & ~window_hole
+    wall, wall_n = wall[keep], wall_n[keep]
+    wall = wall.copy()
+    wall[:, 1] += rng.uniform(-25.0, 25.0, len(wall))
+    wall_n = wall_n.copy()
+    wall_n[:, 0] += rng.normal(0.0, 0.12, len(wall))
+    wall_n[:, 2] += rng.normal(0.0, 0.12, len(wall))
+    wall_n /= np.linalg.norm(wall_n, axis=1, keepdims=True)
+    parts = [(wall, wall_n)]
+    parts.append(_grid(np.array([-200.0, 0.0, 0.0]), np.array([3900.0, 0.0, 0.0]), np.array([0.0, 2500.0, 0.0]), 40, 24, [0.0, 0.0, 1.0], rng=rng))
+    roof_normal = np.array([0.0, 0.45, 0.89])
+    roof_normal = roof_normal / np.linalg.norm(roof_normal)
+    roof_v = np.cross(roof_normal, np.array([1.0, 0.0, 0.0]))
+    roof_v = roof_v / np.linalg.norm(roof_v) * 300.0
+    parts.append(_grid(np.array([200.0, 400.0, 1800.0]), np.array([400.0, 0.0, 0.0]), roof_v, 6, 6, roof_normal, noise=2, rng=rng))
+    points = np.vstack([item[0] for item in parts])
+    normals = np.vstack([item[1] for item in parts])
+    cameras = np.array([[600.0, 4000.0, 1100.0], [1700.0, 4200.0, 1200.0], [2800.0, 3900.0, 1000.0]])
+    sensor_up = np.repeat([[1.0, 0.0, 0.0]], len(cameras), axis=0)
+    detected = facade.detect_facade(
+        points,
+        normals,
+        cameras,
+        mm_per_unit=1.0,
+        up_prior=np.array([0.0, 0.0, 1.0]),
+        camera_ups=sensor_up,
+        wall_thickness_mm=150.0,
+    )
+    scene = facade.to_millimetres(detected, 1.0)
+    frame = np.asarray(detected["transform_colmap_to_room"], float)[:3, :3]
+    assert float(frame[1] @ np.array([0.0, 0.0, 1.0])) > 0.95, (frame, scene["upSource"])
+    assert float(frame[2] @ np.array([0.0, 1.0, 0.0])) > 0.95, frame[2]
+    assert scene["upAxis"] == "Y"
+    assert scene["upSource"].startswith("gravita"), scene["upSource"]
+    wall_plane = scene["planes"][0]
+    assert wall_plane["role"] == "background" and wall_plane["type"] == "facciata"
+    assert abs(wall_plane["widthMm"] - 3500) < 400, wall_plane
+    assert abs(wall_plane["heightMm"] - 2200) < 350, wall_plane
+    assert wall_plane["normal"][2] > 0.99
+    assert wall_plane["support"] > 1500, wall_plane["support"]
+    doors = [item for item in scene["openings"] if item["kind"] == "door"]
+    windows = [item for item in scene["openings"] if item["kind"] == "window"]
+    assert len(doors) == 1, scene["openings"]
+    assert abs(doors[0]["widthMm"] - 600) < 180, doors[0]
+    assert abs(doors[0]["heightMm"] - 2000) < 250, doors[0]
+    assert doors[0]["y0"] < 300, doors[0]
+    assert len(windows) == 1, scene["openings"]
+    assert abs(windows[0]["widthMm"] - 500) < 180, windows[0]
+    assert 500 < windows[0]["heightMm"] < 1200, windows[0]
+    assert windows[0]["y0"] > 400, windows[0]
+    ground = [plane for plane in scene["planes"] if plane["role"] == "terreno"]
+    assert len(ground) == 1 and ground[0]["type"] == "orizzontale", scene["planes"]
+    assert not any(plane["type"] == "inclinato" for plane in scene["planes"]), scene["planes"]
+    assert any(item.get("reason") == "inclinato" for item in scene["skipped"]), scene["skipped"]
+    length, vertical, depth = (float(scene["dims"][key]) for key in ("length_x", "width_y", "height_z"))
+    eye, target, view_up = previews.facade_views(length, vertical, depth)["preview_iso.png"]
+    assert abs(view_up[1] - 1.0) < 1e-6
+    rotation, translation = previews._look_at(eye, target, view_up)
+
+    def image_row(point):
+        local = rotation @ point + translation
+        return float(local[1] / local[2])
+
+    top = np.array([length / 2.0, vertical * 0.85, 0.0])
+    bottom = np.array([length / 2.0, vertical * 0.05, 0.0])
+    assert image_row(top) < image_row(bottom)
+    print(
+        f"z-up facade {wall_plane['widthMm']:.0f} x {wall_plane['heightMm']:.0f} mm, "
+        f"up {scene['upAxis']} via {scene['upSource']}, "
+        f"door {doors[0]['widthMm']:.0f}x{doors[0]['heightMm']:.0f}, "
+        f"window {windows[0]['widthMm']:.0f}x{windows[0]['heightMm']:.0f}"
+    )
 
 
 def check_imports_and_options():

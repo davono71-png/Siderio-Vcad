@@ -178,6 +178,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
             if scene_doc.get("mode") == "facciata":
                 diagnostic["note"] = scene_doc.get("note")
                 diagnostic["upSource"] = scene_doc.get("upSource")
+                diagnostic["upAxis"] = scene_doc.get("upAxis")
                 diagnostic["planes"] = scene_doc.get("planes")
                 diagnostic["skipped"] = scene_doc.get("skipped")
                 diagnostic["openings"] = scene_doc.get("openings")

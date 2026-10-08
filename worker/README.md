@@ -48,7 +48,7 @@ Il guscio della stanza è il bordo esterno di pavimento e soffitto. Un piano ver
 
 `options.mode` vale `stanza` (default) o `facciata`. Se `options.mode` manca, il worker legge `project.kind` da `project.json` (l’app lo scrive già: `stanza` o `facciata`). Un file senza quel campo resta una stanza.
 
-In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola. L'alto è la gravità del telefono, corretta con l'alto delle camere e con un piano di terra se la gravità non torna. Il piano di fondo è la facciata verticale più estesa rivolta verso le foto: lastra di spessore `wallThicknessMm`, faccia su Z=0, spessore dalla parte opposta alla camera. Davanti restano solo piani quasi verticali o quasi orizzontali (il terreno, se c'è, è facoltativo). Un piano inclinato entra solo se è grande e ben sostenuto; gli altri finiscono in `skipped`. Una porta, se il muro ha un vuoto o un piano arretrato delle giuste misure, è un'apertura tagliata nella lastra di fondo. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
+In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola. L'asse verticale dello STEP è **Y** (`upAxis` in `scene.json`): X corre lungo la facciata, Z punta verso la camera, la faccia visibile del muro è Z=0 e lo spessore cresce verso Z negativo. L'alto è la gravità del telefono. L'asse Y della camera la conferma solo se è d'accordo: su un JPEG verticale senza rotazione EXIF quell'asse è spesso orizzontale e non sostituisce la gravità. Un piano di terra corregge la gravità quando non torna. Prima di classificare i piani la nuvola viene ruotata così che Y sia l'alto. Il piano di fondo è la facciata verticale più estesa rivolta verso le foto, spessore `wallThicknessMm`. Un rilievo di tegole o mattoni entro circa 60 mm resta lo stesso muro. Davanti restano solo piani quasi verticali o quasi orizzontali (il terreno, se c'è, è facoltativo). Un piano inclinato entra solo se è grande e ben sostenuto; gli altri finiscono in `skipped`. Una porta (vuoto o piano arretrato) e, se il buco non tocca terra, una finestra sono aperture tagliate nella lastra di fondo. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
 
 Se le quote si contraddicono (lasciandone una fuori l'errore supera il 5%), `diagnostic.json`, `status.json` (`warnings` e il messaggio) e il rapporto di scala riportano l'avviso.
 
@@ -175,7 +175,7 @@ python worker/test_local.py --project-id <uuid> --device cpu
 
 `--project-dir` legge `project.json` e le JPEG (`foto/001.jpg` oppure il nome del `r2Key`) e non carica nulla. `--project-id` scarica da R2 e carica `risultati/`.
 
-Lo smoke test di CI non ha GPU né COLMAP: importa i moduli ed esegue scala e pareti su una stanza sintetica (pavimento, soffitto, armadio arretrato, quadro, tavolo, porta) e su due facciate sintetiche (scrivania senza pavimento né soffitto; muro esterno inclinato, terreno, porta e un piano obliquo da scartare).
+Lo smoke test di CI non ha GPU né COLMAP: importa i moduli ed esegue scala e pareti su una stanza sintetica (pavimento, soffitto, armadio arretrato, quadro, tavolo, porta) e su tre facciate sintetiche (scrivania senza pavimento né soffitto; muro esterno inclinato; nuvola con Z in alto, come il telaio COLMAP, con l'asse della camera orizzontale, una porta e una finestra).
 
 ```bash
 pip install -r worker/requirements-smoke.txt
