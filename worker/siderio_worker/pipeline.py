@@ -146,7 +146,11 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 export_mesh.export_textured(model_room, mvs_dir, out_dir, mm_per_unit)
                 if mode == "facciata":
                     scene_mm = facade.to_millimetres(model_room, mm_per_unit)
-                    walls.export_facade_step(scene_mm, os.path.join(out_dir, "walls.step"))
+                    walls.export_facade_step(
+                        scene_mm,
+                        os.path.join(out_dir, "walls.step"),
+                        extra_step=os.path.join(out_dir, "extra.step"),
+                    )
                     room_mm = scene_mm
                 else:
                     walls.export_step(
@@ -182,6 +186,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 diagnostic["planes"] = scene_doc.get("planes")
                 diagnostic["skipped"] = scene_doc.get("skipped")
                 diagnostic["openings"] = scene_doc.get("openings")
+                diagnostic["lacune"] = scene_doc.get("lacune")
             else:
                 diagnostic["room"] = scene_doc["dims"]
                 with open(os.path.join(work, "room_model.json"), encoding="utf-8") as handle:
@@ -426,6 +431,7 @@ def _present(out_dir: str) -> list[str]:
     for filename in sorted(os.listdir(out_dir)):
         if filename.startswith("preview_") or filename in {
             "walls.step",
+            "extra.step",
             "room_textured.glb",
             "room_textured_obj.zip",
             "room_dense.ply",

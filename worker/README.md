@@ -16,12 +16,13 @@ e scrive in `rilievi/<projectId>/risultati/`:
 | file | contenuto |
 |---|---|
 | `status.json` | fase, percentuale, messaggi, tempi, errore |
-| `walls.step` | stanza: pareti, solette e porta. Facciata: piano di fondo e superfici davanti, in millimetri (CadQuery) |
+| `walls.step` | stanza: pareti, solette e porta. Facciata: muro di fondo con le aperture, il terreno se c'è, e un ritorno a tutta altezza se c'è (CadQuery, mm) |
+| `extra.step` | facciata, solo se servono: mensole, mobili e gli altri piani davanti, fuori dal muro |
 | `room_textured.glb` | mesh con texture, millimetri |
 | `room_textured_obj.zip` | OBJ + MTL + PNG |
 | `room_dense.ply` | nuvola densa in millimetri |
 | `room.json` | stanza: Lx, Ly, H e aperture. Facciata: piani rilevati (`mode`, dimensioni, supporto, scartati) |
-| `scene.json` | solo in modalità facciata, stesso contenuto di `room.json` |
+| `scene.json` | solo in modalità facciata: piani, aperture tagliate e `lacune` (buchi nei dati, non tagli) |
 | `scale_report.json` / `.md` | scala ai minimi quadrati e residui |
 | `diagnostic.json` | foto registrate, pose, tempi |
 | `preview_iso.png`, `preview_top.png`, `preview_plan.png` | anteprime |
@@ -48,7 +49,7 @@ Il guscio della stanza è il bordo esterno di pavimento e soffitto. Un piano ver
 
 `options.mode` vale `stanza` (default) o `facciata`. Se `options.mode` manca, il worker legge `project.kind` da `project.json` (l’app lo scrive già: `stanza` o `facciata`). Un file senza quel campo resta una stanza.
 
-In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola. L'asse verticale dello STEP è **Y** (`upAxis` in `scene.json`): X corre lungo la facciata, Z punta verso la camera, la faccia visibile del muro è Z=0 e lo spessore cresce verso Z negativo. L'alto è la gravità del telefono. L'asse Y della camera la conferma solo se è d'accordo: su un JPEG verticale senza rotazione EXIF quell'asse è spesso orizzontale e non sostituisce la gravità. Un piano di terra corregge la gravità quando non torna. Prima di classificare i piani la nuvola viene ruotata così che Y sia l'alto. Il piano di fondo è la facciata verticale più estesa rivolta verso le foto, spessore `wallThicknessMm`. Un rilievo di tegole o mattoni entro circa 60 mm resta lo stesso muro. Davanti restano solo piani quasi verticali o quasi orizzontali (il terreno, se c'è, è facoltativo). Un piano inclinato entra solo se è grande e ben sostenuto; gli altri finiscono in `skipped`. Una porta (vuoto o piano arretrato) e, se il buco non tocca terra, una finestra sono aperture tagliate nella lastra di fondo. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
+In modalità facciata non servono pavimento né soffitto. Lo STEP non è una scatola. L'asse verticale dello STEP è **Y** (`upAxis` in `scene.json`): X corre lungo la facciata, Z punta verso la camera, la faccia visibile del muro è Z=0 e lo spessore cresce verso Z negativo. L'alto è la gravità del telefono. L'asse Y della camera la conferma solo se è d'accordo: su un JPEG verticale senza rotazione EXIF quell'asse è spesso orizzontale e non sostituisce la gravità. Un piano di terra corregge la gravità quando non torna. Prima di classificare i piani la nuvola viene ruotata così che Y sia l'alto. Il piano di fondo è la facciata verticale più estesa rivolta verso le foto, spessore `wallThicknessMm`. Un rilievo di tegole o mattoni entro circa 60 mm resta lo stesso muro. Davanti restano solo piani quasi verticali o quasi orizzontali (il terreno, se c'è, è facoltativo). Un piano inclinato entra solo se è grande e ben sostenuto; gli altri finiscono in `skipped`. L'estensione del muro segue i punti della faccia, ali rade comprese: un estremo con pochi punti non accorcia la lastra. Una porta è un vuoto che arriva a terra, con muro sui due lati e sopra, ed è un intaglio dal bordo inferiore. Una finestra è un buco interno alla faccia, solo se si vedono punti oltre il muro oppure un imbocco intorno al foro. Una zona senza punti, in particolare verso l'alto o i bordi, non è un'apertura: resta in `lacune` e non viene tagliata. `walls.step` contiene il muro con quelle aperture, il terreno se c'è, e un muro di ritorno (perpendicolare, alto circa quanto la facciata, a un'estremità) spesso come il muro. Mensole, mobili e gli altri piani davanti vanno in `extra.step` e restano elencati in `scene.json`. Se solo il fondo è affidabile, lo STEP contiene soltanto quello e `note` lo dice.
 
 Se le quote si contraddicono (lasciandone una fuori l'errore supera il 5%), `diagnostic.json`, `status.json` (`warnings` e il messaggio) e il rapporto di scala riportano l'avviso.
 

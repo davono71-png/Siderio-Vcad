@@ -294,6 +294,7 @@ def check_facade():
     assert abs(wall["heightMm"] - 1600) < 160, wall
     assert wall["thicknessMm"] == 150.0
     assert wall["thicknessSource"] == "parete"
+    assert wall["step"] == "walls"
     assert abs(wall["normal"][2] - 1) < 1e-6
     horizontal = [plane for plane in scene["planes"] if plane["type"] == "orizzontale"]
     vertical = [plane for plane in scene["planes"] if plane["type"] == "verticale"]
@@ -308,11 +309,13 @@ def check_facade():
     assert abs(desk_y[0] - 740) < 40 and abs(desk_y[1] - 740) < 40, desk
     assert desk["thicknessMm"] == 20.0
     assert desk["thicknessSource"] == "nominale"
+    assert desk["step"] == "extra"
     monitor = vertical[0]
     assert abs((_span(monitor, 0)[1] - _span(monitor, 0)[0]) - 450) < 120, monitor
     assert abs((_span(monitor, 1)[1] - _span(monitor, 1)[0]) - 420) < 120, monitor
     assert abs(_span(monitor, 2)[0] - 180) < 40, monitor
     assert monitor["thicknessMm"] == 20.0
+    assert monitor["step"] == "extra"
     assert any(item["reason"] == "estensione insufficiente" for item in scene["skipped"]), scene["skipped"]
     assert "Piano di fondo" in scene["note"]
     assert scene["openings"] == []
@@ -344,6 +347,7 @@ def check_facade():
 
     check_outdoor_facade(rng)
     check_zup_facade(rng)
+    check_sparse_patch_not_opening()
 
     rng_noise = np.random.default_rng(4)
     noise = rng_noise.normal(size=(60, 3)) * 100
@@ -471,6 +475,8 @@ def check_zup_facade(rng=None):
     roof_v = np.cross(roof_normal, np.array([1.0, 0.0, 0.0]))
     roof_v = roof_v / np.linalg.norm(roof_v) * 300.0
     parts.append(_grid(np.array([200.0, 400.0, 1800.0]), np.array([400.0, 0.0, 0.0]), roof_v, 6, 6, roof_normal, noise=2, rng=rng))
+    # Glass set back behind the hole. An empty patch alone is not a window.
+    parts.append(_grid(np.array([1920.0, -120.0, 930.0]), np.array([460.0, 0.0, 0.0]), np.array([0.0, 0.0, 740.0]), 8, 12, [0.0, 1.0, 0.0], noise=2, rng=rng))
     points = np.vstack([item[0] for item in parts])
     normals = np.vstack([item[1] for item in parts])
     cameras = np.array([[600.0, 4000.0, 1100.0], [1700.0, 4200.0, 1200.0], [2800.0, 3900.0, 1000.0]])
@@ -527,6 +533,84 @@ def check_zup_facade(rng=None):
         f"up {scene['upAxis']} via {scene['upSource']}, "
         f"door {doors[0]['widthMm']:.0f}x{doors[0]['heightMm']:.0f}, "
         f"window {windows[0]['widthMm']:.0f}x{windows[0]['heightMm']:.0f}"
+    )
+
+
+def check_sparse_patch_not_opening():
+    """A missing patch is a lacuna. A thin wing still belongs to the wall.
+
+    The cloud is already Y-up, Z toward the camera. Six points on the left
+    are under one percent of the cloud, so a point-count percentile would
+    drop that wing. Bins keep it. The empty rectangles have no points behind
+    them and no reveal, so they are not cut.
+    """
+    rng = np.random.default_rng(19)
+    wall, wall_n = _grid(
+        np.array([0.0, 0.0, 0.0]),
+        np.array([4000.0, 0.0, 0.0]),
+        np.array([0.0, 2500.0, 0.0]),
+        70,
+        42,
+        [0.0, 0.0, 1.0],
+        rng=rng,
+    )
+    above_picture = (wall[:, 0] > 200) & (wall[:, 0] < 1600) & (wall[:, 1] > 1750) & (wall[:, 1] < 2450)
+    interior = (wall[:, 0] > 1700) & (wall[:, 0] < 2450) & (wall[:, 1] > 450) & (wall[:, 1] < 1250)
+    door_hole = (wall[:, 0] > 2600) & (wall[:, 0] < 3500) & (wall[:, 1] < 2000)
+    keep = ~above_picture & ~interior & ~door_hole
+    wall, wall_n = wall[keep], wall_n[keep]
+    wing_x = np.linspace(-480.0, -20.0, 6)
+    wing = np.stack([wing_x, np.full(6, 1200.0), np.zeros(6)], axis=1)
+    wing_n = np.repeat([[0.0, 0.0, 1.0]], 6, axis=0)
+    parts = [(wall, wall_n), (wing, wing_n)]
+    parts.append(_grid(np.array([2600.0, 0.0, -140.0]), np.array([900.0, 0.0, 0.0]), np.array([0.0, 2000.0, 0.0]), 12, 24, [0.0, 0.0, 1.0], noise=2, rng=rng))
+    parts.append(_grid(np.array([4000.0, 0.0, 0.0]), np.array([0.0, 0.0, 800.0]), np.array([0.0, 2400.0, 0.0]), 10, 28, [-1.0, 0.0, 0.0], rng=rng))
+    parts.append(_grid(np.array([1500.0, 0.0, 0.0]), np.array([0.0, 0.0, 400.0]), np.array([0.0, 1000.0, 0.0]), 8, 14, [-1.0, 0.0, 0.0], rng=rng))
+    parts.append(_grid(np.array([400.0, 700.0, 80.0]), np.array([1400.0, 0.0, 0.0]), np.array([0.0, 0.0, 500.0]), 16, 8, [0.0, 1.0, 0.0], rng=rng))
+    # Picture proud of the wall, under the top gap. One edge is not a frame.
+    parts.append(_grid(np.array([250.0, 1050.0, 90.0]), np.array([1300.0, 0.0, 0.0]), np.array([0.0, 650.0, 0.0]), 16, 10, [0.0, 0.0, 1.0], noise=2, rng=rng))
+    points = np.vstack([item[0] for item in parts])
+    normals = np.vstack([item[1] for item in parts])
+    cameras = np.array([[800.0, 1400.0, 3200.0], [2000.0, 1300.0, 3400.0], [3400.0, 1500.0, 3000.0]])
+    detected = facade.detect_facade(
+        points,
+        normals,
+        cameras,
+        mm_per_unit=1.0,
+        up_prior=np.array([0.0, 1.0, 0.0]),
+        camera_ups=np.repeat([[0.0, 1.0, 0.0]], len(cameras), axis=0),
+        wall_thickness_mm=150.0,
+    )
+    scene = facade.to_millimetres(detected, 1.0)
+    wall_plane = next(plane for plane in scene["planes"] if plane["role"] == "background")
+    assert wall_plane["widthMm"] > 4300, wall_plane
+    assert abs(wall_plane["heightMm"] - 2500) < 250, wall_plane
+    assert not any(item["kind"] == "window" for item in scene["openings"]), scene["openings"]
+    doors = [item for item in scene["openings"] if item["kind"] == "door"]
+    assert len(doors) == 1, scene["openings"]
+    assert abs(doors[0]["widthMm"] - 900) < 220, doors[0]
+    assert doors[0]["y0"] <= wall_plane["originMm"][1] + 1, doors[0]
+
+    def covers(item, x, y):
+        return item["x0"] <= x <= item["x1"] and item["y0"] <= y <= item["y1"]
+
+    lacune = scene["lacune"]
+    assert any(item["kind"] == "lacuna" and item.get("reason") == "dati mancanti" and covers(item, 1000, 2100) for item in lacune), lacune
+    assert any(item["kind"] == "lacuna" and covers(item, 2300, 800) for item in lacune), lacune
+    assert not any(covers(item, 1000, 2100) or covers(item, 2300, 800) for item in scene["openings"])
+    returns = [plane for plane in scene["planes"] if plane["role"] == "ritorno"]
+    assert len(returns) == 1, scene["planes"]
+    assert returns[0]["step"] == "walls" and returns[0]["thicknessMm"] == 150.0, returns[0]
+    extras = [plane for plane in scene["planes"] if plane["step"] == "extra"]
+    assert len(extras) >= 2, scene["planes"]
+    assert all(plane["role"] not in ("background", "terreno", "ritorno") for plane in extras)
+    door_cut = walls.opening_cut_bounds(doors[0])
+    assert door_cut[2] == doors[0]["y0"] - 20
+    window_cut = walls.opening_cut_bounds({"kind": "window", "x0": 100, "x1": 400, "y0": 800, "y1": 1400})
+    assert window_cut == (100, 400, 800, 1400)
+    print(
+        f"sparse facade {wall_plane['widthMm']:.0f} x {wall_plane['heightMm']:.0f} mm, "
+        f"door {doors[0]['widthMm']:.0f}x{doors[0]['heightMm']:.0f}, lacune {len(lacune)}, extra {len(extras)}"
     )
 
 

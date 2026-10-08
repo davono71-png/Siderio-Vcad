@@ -51,19 +51,54 @@ def export_step(room: dict, out_step: str, mm_per_unit: float, thickness_mm: flo
     }
 
 
-def export_facade_step(scene_mm: dict, out_step: str):
+def export_facade_step(scene_mm: dict, out_step: str, extra_step: str | None = None):
     """Slabs for a facade. Each plane is already in millimetres.
 
-    The visible face is the detected plane. Thickness grows behind that face
-    (away from the camera for the background wall, below a desk top, toward
-    the wall for a face parallel to it). Separate solids stay a compound:
-    nothing is fused into a room.
+    ``walls.step`` is the background wall, its openings, the ground when
+    present, and a full-height return wall at either end. Every other front
+    goes to ``extra.step``. A window is a hole inside the face. A door is a
+    notch through the bottom edge.
     """
     import cadquery as cq
 
+    planes = scene_mm.get("planes") or []
+    wall_solids, wall_meta = _facade_solids(cq, [plane for plane in planes if in_walls_step(plane)], scene_mm.get("openings") or [])
+    if not wall_solids:
+        raise RuntimeError("Nessun piano da scrivere nello STEP della facciata.")
+    cq.exporters.export(cq.Compound.makeCompound(wall_solids), out_step)
+    extra_meta = []
+    written_extra = None
+    if extra_step:
+        extra_solids, extra_meta = _facade_solids(cq, [plane for plane in planes if not in_walls_step(plane)], ())
+        if extra_solids:
+            cq.exporters.export(cq.Compound.makeCompound(extra_solids), extra_step)
+            written_extra = extra_step
+    return {"units": "mm", "solids": wall_meta, "extraSolids": extra_meta, "step": out_step, "extra": written_extra}
+
+
+def in_walls_step(plane) -> bool:
+    """Background, ground, and a full-height return. Other fronts are extra."""
+    step = plane.get("step")
+    if step == "walls":
+        return True
+    if step == "extra":
+        return False
+    return plane.get("role") in ("background", "terreno", "ritorno")
+
+
+def opening_cut_bounds(opening):
+    """Axis-aligned cutter on the facade. A door continues below the slab."""
+    x0, x1 = float(opening["x0"]), float(opening["x1"])
+    y0, y1 = float(opening["y0"]), float(opening["y1"])
+    if opening.get("kind") == "door":
+        y0 -= 20.0
+    return x0, x1, y0, y1
+
+
+def _facade_solids(cq, planes, openings):
     shapes = []
     exported = []
-    for plane in scene_mm.get("planes") or []:
+    for plane in planes:
         width = float(plane["widthMm"])
         height = float(plane["heightMm"])
         thickness = float(plane["thicknessMm"])
@@ -76,9 +111,8 @@ def export_facade_step(scene_mm: dict, out_step: str):
         workplane = cq.Workplane(cq.Plane(back, tuple(axis_u), tuple(normal)))
         solid = workplane.box(width, height, thickness, centered=(False, False, False)).val()
         if plane.get("role") == "background":
-            for opening in scene_mm.get("openings") or []:
-                x0, x1 = float(opening["x0"]), float(opening["x1"])
-                y0, y1 = float(opening["y0"]), float(opening["y1"])
+            for opening in openings:
+                x0, x1, y0, y1 = opening_cut_bounds(opening)
                 if x1 - x0 < 50 or y1 - y0 < 50:
                     continue
                 cutter = (
@@ -98,11 +132,7 @@ def export_facade_step(scene_mm: dict, out_step: str):
                 "thicknessMm": round(thickness, 1),
             }
         )
-    if not shapes:
-        raise RuntimeError("Nessun piano da scrivere nello STEP della facciata.")
-    compound = cq.Compound.makeCompound(shapes)
-    cq.exporters.export(compound, out_step)
-    return {"units": "mm", "solids": exported, "step": out_step}
+    return shapes, exported
 
 
 def _vec(values):
