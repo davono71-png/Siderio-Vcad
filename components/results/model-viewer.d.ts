@@ -4,6 +4,7 @@ type ModelViewerProps = DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLEleme
   src?: string;
   poster?: string;
   alt?: string;
+  loading?: "auto" | "lazy" | "eager";
   scale?: string;
   exposure?: string;
   crossorigin?: "anonymous" | "use-credentials" | "";

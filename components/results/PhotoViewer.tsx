@@ -78,7 +78,9 @@ export function PhotoViewer({ src, poster }: { src: string; poster?: string | nu
           alt="Modello fotografico del rilievo"
           // The mesh is stored in millimetres. At that size a phone depth buffer clips it away.
           scale="0.001 0.001 0.001"
+          camera-orbit="28deg 68deg auto"
           camera-controls
+          loading="eager"
           touch-action="none"
           interaction-prompt="none"
           environment-image="neutral"
