@@ -1,3 +1,4 @@
+import { requireAccess } from "@/lib/auth/session";
 import { isUuid } from "@/lib/storage/keys";
 import { configError, loadResults } from "@/lib/results/load";
 
@@ -6,7 +7,9 @@ export const dynamic = "force-dynamic";
 
 const headers = { "cache-control": "no-store" };
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const denied = await requireAccess(request);
+  if (denied) return denied;
   const { id } = await context.params;
   if (!isUuid(id)) {
     return Response.json({ ok: false, code: "bad_id" }, { status: 400, headers });
