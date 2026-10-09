@@ -1,73 +1,61 @@
 # Siderio Vcad
 
-Visualizzatore DWG/DXF standalone. Si installa come PWA, funziona senza rete e **non** parla con Siderio Suite: niente login, niente commesse, niente risalita.
+Web app per trasformare una serie di foto — più avanti anche i punti di un rilievo Leica DISTO 3D — in un modello 3D di una stanza o di una facciata. Le uscite previste sono mesh OBJ/GLB e pareti semplificate in STEP.
 
-Si usa così: **Apri DXF / DWG** (o **Esempio** per il piano terra di prova) → spegni layer e campiture → quota due estremi del disegno → stampa un riquadro.
+Questa versione è lo scheletro sul telefono: scatto, selezione delle foto, quote tra punti notevoli, archivio locale. La ricostruzione pesante non c’è ancora.
 
----
+Interfaccia in italiano, pensata prima per il telefono (Android e iPhone). Accento arancio RAL 2008.
 
-## Quote
+## Cosa fa adesso
 
-- Due estremi **agganciati a entità vere** del DXF: la misura esce da sola, in scala col disegno. Linee e cifra **verdi**.
-- Cerchi e archi: centro + bordo → **raggio** (`R …`); due punti opposti sulla circonferenza → **diametro** (`Ø …`).
-- Due click sugli estremi, il terzo sopra o sotto per la linea di quota. Tasto destro: salta lo scostamento e passa alla quota successiva. Gli estremi restano agganciati.
-- mm/cm/m in *Layer e campiture* sono l'**unità della cifra**. Se il file ha già `$INSUNITS`, non si ricalcolano le coordinate.
-- Si può **riscrivere** un valore: l'originale resta, il nuovo va **sotto tra parentesi** (rosso).
-- Se un estremo non aggancia un'entità: **solo testo inserito**, tutto **rosso**. Niente cifra automatica.
-- Senza CAD le quote automatiche non esistono.
-- Se il DXF **non dichiara le unità** (disegno puro): da *Layer e campiture* si imposta mm/cm/m, un **fattore** (anche `1:100`) oppure si **calibra** due punti con la misura vera. Le quote verdi si ricalcolano; le note tra parentesi restano.
+- Elenco rilievi, nuovo rilievo, scheda rilievo
+- Acquisizione con la fotocamera posteriore: scatto manuale o automatico (1 s / 2 s)
+- Scarto sul dispositivo delle foto mosse (movimento del telefono e nitidezza rispetto agli scatti recenti) o troppo simili
+- Una parete liscia non viene scartata: compare un avviso e si consiglia un bordo o un foglio con texture
+- Avviso se si ruota troppo tra uno scatto e l’altro, o se si gira sul posto senza fare un passo
+- Mappa di copertura per fasce (giù, orizzonte, su 30–45°), pellicola delle foto accettate, consigli di ripresa
+- Coda di caricamento verso Cloudflare R2: le foto accettate partono da sole, con retry, e `project.json` si aggiorna quando cambiano le quote
+- Segni nominati sulle foto (stesso punto su più scatti) e distanze note in millimetri, senza coppie duplicate
+- Esportazione ZIP: foto originali in ordine (`foto/001.jpg`…) e `project.json`
+- PWA: dopo il primo caricamento le pagine già viste funzionano anche senza rete
 
-## Layer e campiture
+Le foto restano in IndexedDB finché il caricamento non è confermato. Si possono poi liberare dal telefono. Le chiavi R2 stanno solo sul server.
 
-Un comando spegne tutte le HATCH. Ogni layer ha on/off. I blocchi (`INSERT`) vengono esplosi in lettura.
+## Struttura
 
-## Stampa riquadro
+```
+app/                  Next.js (radice: Vercel builda da qui)
+components/           schermate
+lib/data/             repository: oggi IndexedDB, domani Supabase
+lib/capture/          fotocamera, selettore, orientamento
+lib/upload/           coda di caricamento verso R2
+lib/storage/          chiavi e client S3, solo server
+lib/export/           ZIP e project.json
+worker/               segnaposto del worker Python (non va su Vercel)
+public/brand, icons   marchio Siderio
+```
 
-Da **Layer e campiture** → *Stampa riquadro*: si tracciano due angoli, esce un PDF A4 di quella porzione.
-
-## DWG
-
-Il formato binario AutoCAD non si legge per intero nel browser. Se il file è un DXF con estensione `.dwg`, o contiene frammenti ASCII, si apre. Altrimenti esporta come **DXF ASCII** da AutoCAD. Il file originale resta comunque allegato al taccuino.
-
-La conversione nativa DWG→DXF è prevista sull'exe Windows (doppio click sul file), non in questa PWA.
-
----
+Il repository in `lib/data/repository.ts` è l’unico punto che le pagine usano per leggere e scrivere. Un’implementazione Supabase potrà sostituirlo senza rifare le schermate.
 
 ## Sviluppo
 
 ```bash
 npm install
 npm run dev
+npm run lint
 npm run build
 ```
 
-Nessuna variabile d'ambiente. Su Vercel: framework Next.js, nome progetto **Siderio Vcad**, nessuna env.
+Apri `http://localhost:3000` dal telefono solo se il dev server è in HTTPS: la fotocamera non parte in chiaro. L’anteprima Vercel è il modo giusto per provarla.
 
----
+Su Vercel il progetto è **siderio-vcad**, build dalla radice. Servono, solo lato server, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. Per accodare un job servono anche `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID`. L’endpoint R2 è `https://<account>.r2.cloudflarestorage.com`. La cartella `worker/` è in `.vercelignore`.
 
-## Repo `Siderio-Vcad`
+`GET /api/storage/health` dice se le variabili ci sono e se il bucket risponde, senza mai restituire i valori.
 
-Il codice ufficiale va su **https://github.com/davono71-png/Siderio-Vcad** (repo nuova, senza Suite). Questa copia su Rilievi è solo il lavoro in corso: **non unire** la PR su `main` di Rilievi.
+## Limiti di questa versione
 
-Cursor non può scrivere su `Siderio-Vcad` finché l’app GitHub **Cursor** ha accesso a quel repo **e** in fondo alla pagina si preme **Save**:
-
-1. [github.com/apps/cursor](https://github.com/apps/cursor) → *Configure* → *Repository access* → **All repositories** (oppure aggiungi **Siderio-Vcad**)
-2. **Save** in basso a sinistra — senza Save GitHub non registra nulla
-
-Il sito su Vercel legge **solo** `Siderio-Vcad` / `main`. La UI a card, le quote a tre click e l’arancio RAL 2008 stanno su questo ramo: se apri il sito e vedi ancora le linguette viola, è il seed vecchio. Ripubblica **questo** albero (non il ramo `cursor/siderio-vcad-seed-9152`):
-
-Da Windows, in una cartella nuova:
-
-```bat
-git clone --branch cursor/vcad-desktop-cards-9152 https://github.com/davono71-png/Siderio-Rilievi.git vcad-ui
-cd vcad-ui
-bash scripts/publish-vcad.sh https://github.com/davono71-png/Siderio-Vcad.git
-```
-
-oppure, da questa cartella già aperta:
-
-```bash
-./scripts/publish-vcad.sh
-```
-
-Poi su Vercel aspetta il deploy e nel browser fai **Ctrl+Shift+R** (se hai installato la PWA: chiudila e riaprila).
+- I risultati del motore si aprono da ogni rilievo (`/rilievo/<id>/risultati`): modello GLB, pareti STEP, scarichi e stato. L’invio al motore usa `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID` (solo server). Senza quelle due variabili il pulsante resta spento
+- Non c’è ancora login: la route di presign accetta solo chiavi `rilievi/<uuid>/…`, jpeg o `project.json`, al massimo 25 MB, URL validi 10 minuti. L’auth arriverà con Supabase
+- La mappa di copertura usa bussola e inclinazione, non una ricostruzione
+- Su iPhone lo scatto a piena risoluzione dipende da ciò che Safari concede allo stream video (`ImageCapture` lì di solito non c’è)
+- Senza permesso ai sensori la mappa resta vuota; le foto si salvano lo stesso

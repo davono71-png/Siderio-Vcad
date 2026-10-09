@@ -2,10 +2,11 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    id: "/",
     name: "Siderio Vcad",
-    short_name: "Vcad",
+    short_name: "Siderio",
     description:
-      "Visualizzatore DWG/DXF: layer, campiture, quote in scala, stampa riquadro. Offline.",
+      "Rilievi fotografici di stanze e facciate: scatto, quote e preparazione del modello 3D. Offline dopo il primo caricamento.",
     start_url: "/",
     scope: "/",
     display: "standalone",
