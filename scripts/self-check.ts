@@ -2,6 +2,7 @@ import { analyzeRgba, textureScores, varianceOfLaplacian } from "../lib/capture/
 import { cameraDirection } from "../lib/capture/direction";
 import { hintFor, pitchBand, selectFrame, type SelectContext } from "../lib/capture/select";
 import { duplicateMeasurement } from "../lib/measure/checks";
+import { wallSolids } from "../lib/results/scene";
 import { checkPresign, photoObjectKey } from "../lib/storage/keys";
 import { orientedSize, orientedToRaw, readJpegInfo } from "../lib/jpeg";
 import type { Measurement } from "../lib/data/types";
@@ -162,6 +163,40 @@ const key = photoObjectKey("11111111-1111-4111-8111-111111111111", 3, "22222222-
 assert(checkPresign({ op: "put", key, contentType: "image/jpeg", contentLength: 1000 }).ok, key);
 assert(!checkPresign({ op: "put", key: "rilievi/altro.jpg", contentType: "image/jpeg", contentLength: 1000 }).ok, "chiave libera rifiutata");
 assert(!checkPresign({ op: "put", key, contentType: "text/plain", contentLength: 1000 }).ok, "tipo rifiutato");
+
+const office = wallSolids({
+  mode: "facciata",
+  planes: [
+    {
+      role: "background",
+      step: "walls",
+      widthMm: 7846.3,
+      heightMm: 2884.9,
+      thicknessMm: 150,
+      originMm: [0, 0, 0],
+      axisU: [1, 0, 0],
+      axisV: [0, 1, 0],
+      normal: [0, 0, 1],
+    },
+    {
+      role: "ritorno",
+      step: "walls",
+      widthMm: 2466.9,
+      heightMm: 2884.9,
+      thicknessMm: 150,
+      originMm: [8071.6, 0, 160.4],
+      axisU: [0, 0, 1],
+      axisV: [0, 1, 0],
+      normal: [-1, 0, 0],
+    },
+  ],
+  openings: [{ kind: "door", x0: 2853.2, x1: 3962.8, y0: 0, y1: 2064.1, widthMm: 1109.6, heightMm: 2064.1 }],
+});
+assert(office.length === 2, "parete e ritorno");
+assert(Math.abs(office[0].width - 7.8463) < 0.001, "lunghezza in metri");
+assert(office[0].holes.length === 1, "porta ritagliata");
+assert(office[0].holes[0].v0 > 0 && office[0].holes[0].v0 < 0.01, "la porta non tocca il bordo della mesh");
+assert(office[1].holes.length === 0, "il ritorno non ha aperture");
 
 console.log("self-check ok");
 

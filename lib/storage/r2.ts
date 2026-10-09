@@ -1,4 +1,13 @@
-import { HeadBucketCommand, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetBucketCorsCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  ListObjectsV2Command,
+  PutBucketCorsCommand,
+  PutObjectCommand,
+  S3Client,
+  type CORSRule,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PRESIGN_SECONDS } from "./keys";
 
@@ -70,6 +79,98 @@ export async function checkBucket(): Promise<{ ok: true; code: "ok" } | { ok: fa
     return { ok: true, code: "ok" };
   } catch (error) {
     return { ok: false, code: codeFromAws(error) };
+  } finally {
+    client.destroy();
+  }
+}
+
+let corsAttempted = false;
+
+/**
+ * The phone loads the GLB with fetch, so the private bucket must answer GET
+ * with CORS. Photo uploads already need their own rule; this only adds GET
+ * when it is missing and leaves existing rules in place.
+ */
+export async function ensureBrowserGetCors() {
+  if (corsAttempted) return;
+  corsAttempted = true;
+  const env = readEnv();
+  const client = clientFor(env);
+  try {
+    let rules: CORSRule[] = [];
+    try {
+      const current = await client.send(new GetBucketCorsCommand({ Bucket: env.bucket }));
+      rules = current.CORSRules ?? [];
+    } catch {
+      return;
+    }
+    const allowsGet = rules.some((rule) => {
+      const methods = (rule.AllowedMethods ?? []).map((method) => method.toUpperCase());
+      const origins = rule.AllowedOrigins ?? [];
+      return (methods.includes("GET") || methods.includes("*")) && origins.includes("*");
+    });
+    if (allowsGet) return;
+    rules.push({
+      AllowedOrigins: ["*"],
+      AllowedMethods: ["GET", "HEAD"],
+      AllowedHeaders: ["*"],
+      ExposeHeaders: ["Content-Length", "Content-Range", "Accept-Ranges", "ETag"],
+      MaxAgeSeconds: 3600,
+    });
+    await client.send(new PutBucketCorsCommand({ Bucket: env.bucket, CORSConfiguration: { CORSRules: rules } }));
+  } catch {
+    /* A token without bucket CORS rights still serves presigned URLs. */
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function listObjects(prefix: string) {
+  const env = readEnv();
+  const client = clientFor(env);
+  try {
+    const listed = await client.send(new ListObjectsV2Command({ Bucket: env.bucket, Prefix: prefix, MaxKeys: 200 }));
+    return (listed.Contents ?? []).flatMap((item) => (item.Key ? [{ key: item.Key, size: item.Size ?? 0 }] : []));
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function readObjectText(key: string) {
+  const env = readEnv();
+  const client = clientFor(env);
+  try {
+    const object = await client.send(new GetObjectCommand({ Bucket: env.bucket, Key: key }));
+    return (await object.Body?.transformToString()) ?? null;
+  } catch (error) {
+    const status = (error as { $metadata?: { httpStatusCode?: number }; name?: string }).$metadata?.httpStatusCode;
+    const name = (error as { name?: string }).name;
+    if (status === 404 || name === "NoSuchKey" || name === "NotFound") return null;
+    throw error;
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function presignGet(input: {
+  key: string;
+  expiresIn: number;
+  contentType?: string;
+  downloadName?: string;
+}) {
+  const env = readEnv();
+  const client = clientFor(env);
+  try {
+    const command = new GetObjectCommand({
+      Bucket: env.bucket,
+      Key: input.key,
+      ResponseContentType: input.contentType,
+      ResponseContentDisposition: input.downloadName
+        ? `attachment; filename="${input.downloadName.replace(/[^A-Za-z0-9._-]+/g, "")}"`
+        : undefined,
+    });
+    const url = await getSignedUrl(client, command, { expiresIn: input.expiresIn });
+    return { url, expiresIn: input.expiresIn };
   } finally {
     client.destroy();
   }
