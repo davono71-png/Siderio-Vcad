@@ -170,8 +170,9 @@ export function uploadStatusText(summary: UploadSummary) {
 export function uploadErrorText(code: string | null) {
   if (!code) return null;
   if (code === "missing_env" || code === "bad_account") return "Archivio remoto non configurato su questo server.";
-  if (code === "unconfigured") return "Configura APP_ACCESS_CODE sul server.";
-  if (code === "unauthorized") return "Serve di nuovo il codice di accesso.";
+  if (code === "unconfigured") return "Configura l’accesso a Siderio Suite sul server.";
+  if (code === "unauthorized") return "Accedi di nuovo con Siderio Suite.";
+  if (code === "forbidden") return "Accesso riservato all'amministratore.";
   if (code === "network") return "Rete assente: riprovo da solo.";
   if (code === "denied") return "L’archivio ha rifiutato l’accesso.";
   if (code === "too_big" || code === "bad_size") return "File oltre il limite (25 MB per le foto).";

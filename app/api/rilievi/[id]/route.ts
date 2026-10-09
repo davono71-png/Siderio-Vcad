@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store" };
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   const { id } = await context.params;
   if (!isUuid(id)) return Response.json({ ok: false, code: "bad_id" }, { status: 400, headers });
@@ -23,7 +23,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 }
 
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   const { id } = await context.params;
   if (!isUuid(id)) return Response.json({ ok: false, code: "bad_id" }, { status: 400, headers });
@@ -54,7 +54,7 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   const { id } = await context.params;
   if (!isUuid(id)) return Response.json({ ok: false, code: "bad_id" }, { status: 400, headers });

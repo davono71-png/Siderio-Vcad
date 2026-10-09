@@ -1,36 +1,57 @@
-import { accessCode, accessState, clearCookie, codesMatch, readCookie, sessionCookie, signSession, ACCESS_COOKIE } from "@/lib/auth/session";
+import { RESERVED_MESSAGE } from "@/lib/auth/admin";
+import { authorizeUser } from "@/lib/auth/check";
+import { openAuth } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const headers = { "cache-control": "no-store" };
+const INVALID = "Email o password non validi.";
 
 export async function GET(request: Request) {
-  const state = accessState(readCookie(request, ACCESS_COOKIE));
-  if (state === "ok") return Response.json({ ok: true }, { headers });
-  return Response.json({ ok: false, code: state }, { status: state === "unconfigured" ? 503 : 401, headers });
+  const { supabase, finish } = await openAuth(request);
+  if (!supabase) return finish({ ok: false, code: "unconfigured" }, 503);
+  const code = await authorizeUser(supabase);
+  if (code === "ok") return finish({ ok: true }, 200);
+  if (code === "forbidden") return finish({ ok: false, code, message: RESERVED_MESSAGE }, 403);
+  return finish({ ok: false, code: "unauthorized" }, 401);
 }
 
 export async function POST(request: Request) {
-  if (!accessCode()) {
-    return Response.json({ ok: false, code: "unconfigured" }, { status: 503, headers });
-  }
-  let code = "";
+  const { supabase, finish } = await openAuth(request);
+  if (!supabase) return finish({ ok: false, code: "unconfigured" }, 503);
+
+  let email = "";
+  let password = "";
   try {
-    const body = (await request.json()) as { code?: unknown };
-    code = typeof body.code === "string" ? body.code : "";
+    const body = (await request.json()) as { email?: unknown; password?: unknown };
+    email = typeof body.email === "string" ? body.email.trim() : "";
+    password = typeof body.password === "string" ? body.password : "";
   } catch {
-    return Response.json({ ok: false, code: "bad_json" }, { status: 400, headers });
+    return finish({ ok: false, code: "bad_json" }, 400);
   }
-  if (!codesMatch(code)) {
-    return Response.json({ ok: false, code: "bad_code" }, { status: 401, headers });
+  if (!email || !password) {
+    return finish({ ok: false, code: "bad_credentials", message: INVALID }, 401);
   }
-  return Response.json(
-    { ok: true },
-    { headers: { ...headers, "set-cookie": sessionCookie(signSession(), request) } },
-  );
+
+  const signed = await supabase.auth.signInWithPassword({ email, password });
+  if (signed.error || !signed.data.user) {
+    const authCode = signed.error?.code;
+    if (authCode === "invalid_credentials" || authCode === "email_not_confirmed") {
+      return finish({ ok: false, code: "bad_credentials", message: INVALID }, 401);
+    }
+    return finish({ ok: false, code: "auth_unavailable", message: "Siderio Suite non risponde. Riprova tra poco." }, 503);
+  }
+
+  const code = await authorizeUser(supabase);
+  if (code !== "ok") {
+    await supabase.auth.signOut();
+    return finish({ ok: false, code: "forbidden", message: RESERVED_MESSAGE }, 403);
+  }
+  return finish({ ok: true }, 200);
 }
 
 export async function DELETE(request: Request) {
-  return Response.json({ ok: true }, { headers: { ...headers, "set-cookie": clearCookie(request) } });
+  const { supabase, finish } = await openAuth(request);
+  if (supabase) await supabase.auth.signOut();
+  return finish({ ok: true }, 200);
 }

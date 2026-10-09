@@ -64,7 +64,7 @@ export function HomeScreen() {
         );
         const remote = await fetchRemoteSurveys();
         if (cancelled) return;
-        if (!remote.ok && remote.code !== "unauthorized" && remote.code !== "unconfigured") {
+        if (!remote.ok && remote.code !== "unauthorized" && remote.code !== "forbidden" && remote.code !== "unconfigured") {
           setError("Archivio remoto non disponibile. Mostro i rilievi di questo dispositivo.");
         } else {
           setError(null);

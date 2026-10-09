@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Short-lived PUT/GET URLs for rilievi/<uuid>/… only.
- * The access cookie is required. Inputs are checked so this is not a general
+ * The Siderio Suite session is required. Inputs are checked so this is not a general
  * write proxy: jpeg or project.json, size cap, 10 min.
  */
 
@@ -28,7 +28,7 @@ function allowed(ip: string) {
 }
 
 export async function POST(request: Request) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   if (!allowed(clientIp(request))) {
     return Response.json({ ok: false, code: "rate_limited" }, { status: 429, headers: { "cache-control": "no-store" } });

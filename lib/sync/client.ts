@@ -3,13 +3,13 @@ import { buildProjectDocument } from "../export/document";
 import { parseSurveyDocument, type SurveyDocument } from "./document";
 import { mergeDocuments, sameContent } from "./merge";
 
-export type SyncResult = "ok" | "missing" | "offline" | "unauthorized" | "unconfigured" | "error";
+export type SyncResult = "ok" | "missing" | "offline" | "unauthorized" | "forbidden" | "unconfigured" | "error";
 
 const tails = new Map<string, Promise<SyncResult>>();
 
 export function noteAccess(response: Response) {
   if (typeof window === "undefined") return;
-  if (response.status === 401 || response.status === 503) {
+  if (response.status === 401 || response.status === 403 || response.status === 503) {
     window.dispatchEvent(new CustomEvent("siderio-auth"));
   }
 }
@@ -24,6 +24,7 @@ async function fetchRemote(projectId: string): Promise<SurveyDocument | null> {
   noteAccess(response);
   const body = await readJson(response);
   if (response.status === 401) throw new Error("unauthorized");
+  if (response.status === 403) throw new Error("forbidden");
   if (response.status === 503 && body?.code === "unconfigured") throw new Error("unconfigured");
   if (!response.ok) throw new Error(body?.code || "sync_read_failed");
   return parseSurveyDocument(body?.document, projectId);
@@ -56,6 +57,7 @@ async function doSync(projectId: string): Promise<SyncResult> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message === "unauthorized") return "unauthorized";
+    if (message === "forbidden") return "forbidden";
     if (message === "unconfigured") return "unconfigured";
     if (typeof navigator !== "undefined" && !navigator.onLine) return "offline";
     return "error";
@@ -106,6 +108,7 @@ async function doSync(projectId: string): Promise<SyncResult> {
       continue;
     }
     if (result.response.status === 401) return "unauthorized";
+    if (result.response.status === 403) return "forbidden";
     if (result.response.status === 503 && result.body?.code === "unconfigured") return "unconfigured";
     if (!result.response.ok) return "error";
     const saved = parseSurveyDocument(result.body?.document, projectId);
@@ -133,6 +136,7 @@ export async function deleteRemoteSurvey(projectId: string) {
   if (response.ok) return "ok" as const;
   const body = await readJson(response);
   if (response.status === 401) return "unauthorized" as const;
+  if (response.status === 403 || body?.code === "forbidden") return "forbidden" as const;
   if (body?.code === "unconfigured") return "unconfigured" as const;
   return "error" as const;
 }

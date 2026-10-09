@@ -2,12 +2,14 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Logo } from "@/components/brand/Logo";
+import { RESERVED_MESSAGE } from "@/lib/auth/admin";
 
-type Gate = "loading" | "ok" | "unconfigured" | "unauthorized";
+type Gate = "loading" | "ok" | "unconfigured" | "login";
 
 export function AccessGate({ children }: { children: ReactNode }) {
   const [gate, setGate] = useState<Gate>("loading");
-  const [code, setCode] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -16,13 +18,21 @@ export function AccessGate({ children }: { children: ReactNode }) {
     async function refresh() {
       try {
         const response = await fetch("/api/accesso", { cache: "no-store" });
-        const body = (await response.json().catch(() => null)) as { ok?: boolean; code?: string } | null;
+        const body = (await response.json().catch(() => null)) as { ok?: boolean; code?: string; message?: string } | null;
         if (cancelled) return;
-        if (body?.ok) setGate("ok");
-        else if (body?.code === "unconfigured") setGate("unconfigured");
-        else setGate("unauthorized");
+        if (body?.ok) {
+          setError(null);
+          setGate("ok");
+          return;
+        }
+        if (body?.code === "unconfigured") {
+          setGate("unconfigured");
+          return;
+        }
+        setError(body?.code === "forbidden" ? body.message || RESERVED_MESSAGE : null);
+        setGate("login");
       } catch {
-        if (!cancelled) setGate("unauthorized");
+        if (!cancelled) setGate("login");
       }
     }
     void refresh();
@@ -42,18 +52,22 @@ export function AccessGate({ children }: { children: ReactNode }) {
       const response = await fetch("/api/accesso", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ email, password }),
       });
-      const body = (await response.json().catch(() => null)) as { ok?: boolean; code?: string } | null;
+      const body = (await response.json().catch(() => null)) as { ok?: boolean; code?: string; message?: string } | null;
       if (body?.code === "unconfigured") {
         setGate("unconfigured");
         return;
       }
-      if (!response.ok || !body?.ok) {
-        setError("Codice non valido.");
+      if (body?.code === "forbidden") {
+        setError(body.message || RESERVED_MESSAGE);
         return;
       }
-      setCode("");
+      if (!response.ok || !body?.ok) {
+        setError(body?.message || "Email o password non validi.");
+        return;
+      }
+      setPassword("");
       setGate("ok");
     } catch {
       setError("Connessione non riuscita.");
@@ -77,10 +91,8 @@ export function AccessGate({ children }: { children: ReactNode }) {
           <Logo />
         </header>
         <h1 className="font-serif text-4xl tracking-tight">Accesso</h1>
-        <p className="mt-4 text-sm leading-relaxed">Configura APP_ACCESS_CODE</p>
-        <p className="mt-2 text-sm text-steel">
-          Il server non ha il codice di accesso. Senza quella variabile i rilievi restano chiusi.
-        </p>
+        <p className="mt-4 text-sm leading-relaxed">Il collegamento a Siderio Suite non è configurato.</p>
+        <p className="mt-2 text-sm text-steel">Senza l’indirizzo e la chiave pubblica i rilievi restano chiusi.</p>
       </div>
     );
   }
@@ -92,21 +104,34 @@ export function AccessGate({ children }: { children: ReactNode }) {
       </header>
       <h1 className="font-serif text-4xl tracking-tight">Accesso</h1>
       <p className="mt-2 text-sm leading-relaxed text-steel">
-        Inserisci il codice per aprire i rilievi su questo telefono o su questo computer.
+        Accedi con le credenziali di Siderio Suite. La sessione resta su questo telefono.
       </p>
       <form className="notebook-card mt-6 grid gap-3 p-4" onSubmit={(event) => void onSubmit(event)}>
-        <label className="text-sm font-semibold">
-          Codice
+        <label className="text-sm font-semibold" htmlFor="suite-email">
+          Email
           <input
+            id="suite-email"
+            className="input mt-1"
+            type="email"
+            autoComplete="username"
+            inputMode="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <label className="text-sm font-semibold" htmlFor="suite-password">
+          Password
+          <input
+            id="suite-password"
             className="input mt-1"
             type="password"
             autoComplete="current-password"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
           />
         </label>
         {error ? <p className="text-sm text-danger">{error}</p> : null}
-        <button type="submit" className="btn-primary bg-accent text-ink" disabled={busy || code.trim().length === 0}>
+        <button type="submit" className="btn-primary bg-accent text-ink" disabled={busy || email.trim().length === 0 || password.length === 0}>
           {busy ? "Verifica…" : "Entra"}
         </button>
       </form>

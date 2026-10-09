@@ -20,7 +20,7 @@ function runpodUrl(endpoint: string, jobId?: string) {
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   const { id } = await context.params;
   if (!isUuid(id)) return Response.json({ ok: false, code: "bad_id" }, { status: 400, headers });
@@ -55,7 +55,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   const { id } = await context.params;
   const jobId = new URL(request.url).searchParams.get("jobId") ?? "";

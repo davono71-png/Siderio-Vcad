@@ -48,14 +48,14 @@ npm run build
 
 Apri `http://localhost:3000` dal telefono solo se il dev server è in HTTPS: la fotocamera non parte in chiaro. L’anteprima Vercel è il modo giusto per provarla.
 
-Su Vercel il progetto è **siderio-vcad**, build dalla radice. Servono, solo lato server, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. Per accodare un job servono anche `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID`. L’elenco, la lettura, la scrittura e l’invio al motore richiedono `APP_ACCESS_CODE` (e, se vuoi una firma separata dal codice, `APP_SESSION_SECRET`). Senza il codice quelle route restano chiuse. L’endpoint R2 è `https://<account>.r2.cloudflarestorage.com`. La cartella `worker/` è in `.vercelignore`.
+Su Vercel il progetto è **siderio-vcad**, build dalla radice. Servono, solo lato server, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. Per accodare un job servono anche `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID`. L’elenco, la lettura, la scrittura, i risultati e l’invio al motore richiedono l’accesso di Siderio Suite: email e password, sessione in cookie, e `is_master` sul proprio profilo. URL e chiave pubblica del progetto Suite sono nel codice; `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` servono solo per sostituirli. Un valore vuoto chiude l’accesso. `VCAD_ADMIN_RULE` è facoltativa (default `is_master`). L’endpoint R2 è `https://<account>.r2.cloudflarestorage.com`. La cartella `worker/` è in `.vercelignore`.
 
 `GET /api/storage/health` dice se le variabili ci sono e se il bucket risponde, senza mai restituire i valori.
 
 ## Limiti di questa versione
 
 - I risultati del motore si aprono da ogni rilievo (`/rilievo/<id>/risultati`): modello GLB, pareti STEP, scarichi e stato. L’invio al motore usa `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID` (solo server). Senza quelle due variabili il pulsante resta spento
-- L’accesso è un codice condiviso (`APP_ACCESS_CODE`), ricordato in un cookie httpOnly. Telefono e computer leggono e scrivono lo stesso `project.json` su R2, con revisione e unione per id. I punti e le quote già sul telefono (Ufficio, Tost, Stanza test) salgono sull’archivio alla prossima apertura di quel rilievo
+- L’accesso è l’account amministratore di Siderio Suite (`is_master`), ricordato nel cookie della sessione. Telefono e computer leggono e scrivono lo stesso `project.json` su R2, con revisione e unione per id. I punti e le quote già sul telefono (Ufficio, Tost, Stanza test) salgono sull’archivio alla prossima apertura di quel rilievo
 - La mappa di copertura usa bussola e inclinazione, non una ricostruzione
 - Su iPhone lo scatto a piena risoluzione dipende da ciò che Safari concede allo stream video (`ImageCapture` lì di solito non c’è)
 - Senza permesso ai sensori la mappa resta vuota; le foto si salvano lo stesso

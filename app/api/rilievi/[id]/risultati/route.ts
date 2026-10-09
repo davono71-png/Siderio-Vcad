@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store" };
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const denied = requireAccess(request);
+  const denied = await requireAccess(request);
   if (denied) return denied;
   const { id } = await context.params;
   if (!isUuid(id)) {
