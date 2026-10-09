@@ -37,7 +37,7 @@ export function HomeScreen() {
   }, []);
 
   return (
-    <div className="page pb-28">
+    <div className="page">
       <header className="flex items-center justify-between py-3">
         <Logo />
       </header>
@@ -58,7 +58,7 @@ export function HomeScreen() {
         </div>
       ) : null}
 
-      <ul className="mt-6 flex flex-col gap-3">
+      <ul className="survey-list mt-6 flex flex-col gap-3">
         {projects?.map((project) => (
           <li key={project.id}>
             <div className="notebook-card p-4">
@@ -79,7 +79,7 @@ export function HomeScreen() {
         ))}
       </ul>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-lg px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
+      <div className="home-dock">
         <Link href="/nuovo" className="btn-primary flex w-full items-center justify-center bg-accent text-ink">
           Nuovo rilievo
         </Link>

@@ -161,7 +161,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="page">
+    <div className={mmOpen || renaming ? "page pad-clear" : "page"}>
       <PageHeader title="Quote" backHref={`/rilievo/${projectId}`} />
       <p className="text-sm leading-relaxed text-steel">
         Segna lo stesso punto su almeno due foto, poi scrivi una distanza nota in millimetri: una cornice da 930 mm,

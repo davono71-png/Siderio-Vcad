@@ -57,6 +57,28 @@ select {
   padding: max(0.75rem, env(safe-area-inset-top)) 1rem max(1.5rem, env(safe-area-inset-bottom));
 }
 
+/* Clears the fixed "Nuovo rilievo" bar: button height + its vertical margin + the home indicator. */
+.survey-list {
+  padding-bottom: calc(3rem + 1.5rem + env(safe-area-inset-bottom));
+}
+
+.home-dock {
+  position: fixed;
+  z-index: 20;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  margin-inline: auto;
+  width: 100%;
+  max-width: 32rem;
+  padding: 0.5rem 1rem calc(1rem + env(safe-area-inset-bottom));
+}
+
+/* Lets the quote form scroll above an open keypad or letter strip. */
+.page.pad-clear {
+  padding-bottom: calc(35dvh + env(safe-area-inset-bottom));
+}
+
 .page-header {
   display: flex;
   align-items: center;
