@@ -1,0 +1,11 @@
+# Runtime Python packages for the RunPod image. COLMAP/pycolmap and OpenMVS
+# are compiled in the Dockerfile; they are not on PyPI for sm_61 and sm_89.
+numpy==2.2.6
+scipy==1.15.3
+pillow==11.2.1
+open3d==0.19.0
+cadquery==2.5.2
+trimesh==4.9.0
+# runpod 1.12 requires boto3>=1.43.66
+boto3==1.43.108
+runpod==1.12.0

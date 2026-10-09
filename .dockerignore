@@ -1,0 +1,16 @@
+.git
+.github
+.next
+node_modules
+public
+out
+coverage
+.vercel
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__
+**/*.py[cod]
+worker/prototipo
+*.md
+!worker/README.md
