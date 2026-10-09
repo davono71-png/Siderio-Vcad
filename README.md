@@ -48,13 +48,13 @@ npm run build
 
 Apri `http://localhost:3000` dal telefono solo se il dev server è in HTTPS: la fotocamera non parte in chiaro. L’anteprima Vercel è il modo giusto per provarla.
 
-Su Vercel il progetto è **siderio-vcad**, build dalla radice. Servono, solo lato server, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. L’endpoint è `https://<account>.r2.cloudflarestorage.com`. La cartella `worker/` è in `.vercelignore`.
+Su Vercel il progetto è **siderio-vcad**, build dalla radice. Servono, solo lato server, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. Per accodare un job servono anche `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID`. L’endpoint R2 è `https://<account>.r2.cloudflarestorage.com`. La cartella `worker/` è in `.vercelignore`.
 
 `GET /api/storage/health` dice se le variabili ci sono e se il bucket risponde, senza mai restituire i valori.
 
 ## Limiti di questa versione
 
-- Il job del worker e il viewer 3D sono ancora segnaposto. Le foto invece vanno su R2 se le variabili sono configurate
+- I risultati del motore si aprono da ogni rilievo (`/rilievo/<id>/risultati`): modello GLB, pareti STEP, scarichi e stato. L’invio al motore usa `RUNPOD_API_KEY` e `RUNPOD_ENDPOINT_ID` (solo server). Senza quelle due variabili il pulsante resta spento
 - Non c’è ancora login: la route di presign accetta solo chiavi `rilievi/<uuid>/…`, jpeg o `project.json`, al massimo 25 MB, URL validi 10 minuti. L’auth arriverà con Supabase
 - La mappa di copertura usa bussola e inclinazione, non una ricostruzione
 - Su iPhone lo scatto a piena risoluzione dipende da ciò che Safari concede allo stream video (`ImageCapture` lì di solito non c’è)

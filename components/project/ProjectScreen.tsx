@@ -14,8 +14,6 @@ import { Sheet } from "../ui/Sheet";
 
 type Thumb = { photo: PhotoMeta; url: string };
 
-const OUTPUTS = ["OBJ", "GLB", "STEP"] as const;
-
 export function ProjectScreen({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
@@ -97,13 +95,6 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     }
   }
 
-  async function onEnqueue() {
-    setMessage(null);
-    const job = await getRepository().enqueueReconstruction(projectId);
-    setProject((current) => (current ? { ...current, job } : current));
-    router.push(`/rilievo/${projectId}/lavoro`);
-  }
-
   async function onDelete() {
     await getRepository().deleteProject(projectId);
     router.push("/");
@@ -170,34 +161,17 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       </div>
 
       <section className="notebook-card mt-5 p-4">
-        <h2 className="font-serif text-xl">Elaborazione</h2>
+        <h2 className="font-serif text-xl">Risultati</h2>
         <p className="mt-1 text-sm leading-relaxed text-steel">
-          Il worker GPU (COLMAP, mesh, STEP) non è ancora collegato. Puoi comunque preparare l’invio: lo stato resta
-          sul telefono.
+          Modello fotografico, pareti per Solid Edge e stato del motore.
         </p>
         <div className="mt-3 grid gap-2">
-          <button type="button" className="btn-primary" onClick={() => void onEnqueue()}>
-            Invia per l’elaborazione
-          </button>
+          <Link href={`/rilievo/${projectId}/risultati`} className="btn-primary bg-accent text-center text-ink">
+            Apri i risultati
+          </Link>
           <Link href={`/rilievo/${projectId}/lavoro`} className="btn-secondary text-center">
             Stato del lavoro
           </Link>
-          <Link href={`/rilievo/${projectId}/modello`} className="btn-secondary text-center">
-            Anteprima 3D
-          </Link>
-          <div className="grid grid-cols-3 gap-2">
-            {OUTPUTS.map((output) => (
-              <button
-                key={output}
-                type="button"
-                className="btn-secondary"
-                disabled
-                title="Disponibile dopo l’elaborazione sul worker"
-              >
-                {output}
-              </button>
-            ))}
-          </div>
         </div>
       </section>
 

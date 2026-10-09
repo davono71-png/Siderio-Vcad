@@ -9,6 +9,10 @@ export function formatWhen(iso: string) {
   }).format(date);
 }
 
+export function formatMm(value: number) {
+  return `${new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0 }).format(value)} mm`;
+}
+
 export function kindLabel(kind: ProjectKind) {
   return kind === "facciata" ? "Facciata" : "Stanza";
 }

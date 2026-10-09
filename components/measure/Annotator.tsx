@@ -11,6 +11,7 @@ import { orientedToRaw } from "@/lib/jpeg";
 import { fetchRemotePhoto } from "@/lib/upload/remote";
 import { scheduleManifest } from "@/lib/upload/runner";
 import { Sheet } from "../ui/Sheet";
+import { LetterStrip } from "./LetterStrip";
 
 type View = { scale: number; x: number; y: number };
 type Draft = { x: number; y: number };
@@ -401,17 +402,16 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
           <p className="text-sm text-steel">
             Stesso nome su più foto: servirà per triangolare. La quota in millimetri si inserisce nella pagina Quote.
           </p>
-          <label className="mt-3 block text-sm font-semibold" htmlFor="point-label">
-            Nome
-          </label>
-          <input
-            id="point-label"
-            className="input mt-1"
-            value={linkId ? (points.find((point) => point.id === linkId)?.label ?? label) : label}
-            disabled={Boolean(linkId)}
-            onChange={(event) => setLabel(event.target.value)}
-            autoComplete="off"
-          />
+          {linkId ? (
+            <p className="mt-3 text-sm font-semibold">
+              Nome: {points.find((point) => point.id === linkId)?.label ?? label}
+            </p>
+          ) : (
+            <div className="mt-3">
+              <p className="text-sm font-semibold">Nome</p>
+              <LetterStrip value={label} onChange={setLabel} />
+            </div>
+          )}
           {points.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" className={`chip ${linkId == null ? "chip-on" : ""}`} onClick={() => setLinkId(null)}>

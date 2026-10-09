@@ -2,6 +2,8 @@ import { analyzeRgba, textureScores, varianceOfLaplacian } from "../lib/capture/
 import { cameraDirection } from "../lib/capture/direction";
 import { hintFor, pitchBand, selectFrame, type SelectContext } from "../lib/capture/select";
 import { duplicateMeasurement } from "../lib/measure/checks";
+import { editMillimetres, parsePointName, pointNameFromLetter, withLetter, withNextSuffix } from "../lib/measure/entry";
+import { wallSolids } from "../lib/results/scene";
 import { checkPresign, photoObjectKey } from "../lib/storage/keys";
 import { orientedSize, orientedToRaw, readJpegInfo } from "../lib/jpeg";
 import type { Measurement } from "../lib/data/types";
@@ -158,10 +160,63 @@ const pair: Measurement = {
 assert(duplicateMeasurement([pair], "b", "a")?.id === "1", "coppia di punti duplicata");
 assert(duplicateMeasurement([pair], "a", "c") == null, "coppia diversa");
 
+assert(editMillimetres("", "9") === "9", "prima cifra");
+assert(editMillimetres("0", "5") === "5", "niente zero iniziale");
+assert(editMillimetres("", "comma") === "0,", "virgola iniziale");
+assert(editMillimetres("930", "comma") === "930,", "virgola");
+assert(editMillimetres("930,", "5") === "930,5", "decimale");
+assert(editMillimetres("930,5", "1") === "930,5", "un solo decimale");
+assert(editMillimetres("930,5", "comma") === "930,5", "una sola virgola");
+assert(editMillimetres("930", "back") === "93", "backspace");
+assert(editMillimetres("12", "clear") === "", "azzera");
+assert(editMillimetres("123456", "7") === "123456", "sei cifre intere");
+assert(pointNameFromLetter("b", 0) === "B", "lettera");
+assert(pointNameFromLetter("A", 2) === "A2", "suffisso");
+assert(withLetter("A2", "A") === "A2", "stessa lettera tiene il numero");
+assert(withLetter("A2", "B") === "B", "altra lettera senza numero");
+assert(withNextSuffix("C") === "C1", "più aggiunge 1");
+assert(withNextSuffix("C1") === "C2", "più incrementa");
+const parsed = parsePointName("a12");
+assert(parsed?.letter === "A" && parsed.suffix === 12, "nome con numero");
+
 const key = photoObjectKey("11111111-1111-4111-8111-111111111111", 3, "22222222-2222-4222-8222-222222222222");
 assert(checkPresign({ op: "put", key, contentType: "image/jpeg", contentLength: 1000 }).ok, key);
 assert(!checkPresign({ op: "put", key: "rilievi/altro.jpg", contentType: "image/jpeg", contentLength: 1000 }).ok, "chiave libera rifiutata");
 assert(!checkPresign({ op: "put", key, contentType: "text/plain", contentLength: 1000 }).ok, "tipo rifiutato");
+
+const office = wallSolids({
+  mode: "facciata",
+  planes: [
+    {
+      role: "background",
+      step: "walls",
+      widthMm: 7846.3,
+      heightMm: 2884.9,
+      thicknessMm: 150,
+      originMm: [0, 0, 0],
+      axisU: [1, 0, 0],
+      axisV: [0, 1, 0],
+      normal: [0, 0, 1],
+    },
+    {
+      role: "ritorno",
+      step: "walls",
+      widthMm: 2466.9,
+      heightMm: 2884.9,
+      thicknessMm: 150,
+      originMm: [8071.6, 0, 160.4],
+      axisU: [0, 0, 1],
+      axisV: [0, 1, 0],
+      normal: [-1, 0, 0],
+    },
+  ],
+  openings: [{ kind: "door", x0: 2853.2, x1: 3962.8, y0: 0, y1: 2064.1, widthMm: 1109.6, heightMm: 2064.1 }],
+});
+assert(office.length === 2, "parete e ritorno");
+assert(Math.abs(office[0].width - 7.8463) < 0.001, "lunghezza in metri");
+assert(office[0].holes.length === 1, "porta ritagliata");
+assert(office[0].holes[0].v0 > 0 && office[0].holes[0].v0 < 0.01, "la porta non tocca il bordo della mesh");
+assert(office[1].holes.length === 0, "il ritorno non ha aperture");
 
 console.log("self-check ok");
 

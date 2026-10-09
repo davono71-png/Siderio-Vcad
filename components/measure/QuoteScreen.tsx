@@ -9,6 +9,8 @@ import { createId } from "@/lib/data/id";
 import { closeViews, duplicateMeasurement } from "@/lib/measure/checks";
 import { scheduleManifest } from "@/lib/upload/runner";
 import { PageHeader } from "../ui/PageHeader";
+import { LetterStrip } from "./LetterStrip";
+import { MmKeypad } from "./MmKeypad";
 
 type Thumb = { photo: PhotoMeta; url: string };
 
@@ -23,6 +25,8 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checklist, setChecklist] = useState<ScaleChecklist>(emptyChecklist());
+  const [mmOpen, setMmOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +69,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   const labels = useMemo(() => new Map(points.map((point) => [point.id, point.label])), [points]);
+  const renaming = points.find((point) => point.id === renamingId) ?? null;
   const photoById = useMemo(() => new Map(photos.map((item) => [item.photo.id, item.photo])), [photos]);
   const weakPoints = points.filter((point) => closeViews(point, photoById).length > 0);
   const missingDirections = (
@@ -109,7 +114,9 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     };
     await getRepository().upsertMeasurement(measurement);
     setMeasurements((current) => [...current, measurement]);
+    setDistance("");
     setNote("");
+    setMmOpen(false);
     scheduleManifest(projectId);
   }
 
@@ -123,8 +130,8 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     const label = nextLabel.trim();
     if (!label || label === point.label) return;
     const next = { ...point, label };
-    await getRepository().upsertPoint(next);
     setPoints((current) => current.map((item) => (item.id === point.id ? next : item)));
+    await getRepository().upsertPoint(next);
     scheduleManifest(projectId);
   }
 
@@ -231,12 +238,18 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
               const count = new Set(point.observations.map((item) => item.photoId)).size;
               return (
                 <li key={point.id} className="notebook-card flex items-center gap-2 p-3">
-                  <input
-                    className="input max-w-28"
+                  <button
+                    type="button"
+                    className={`point-name ${renamingId === point.id ? "on" : ""}`}
                     aria-label={`Nome del punto ${point.label}`}
-                    defaultValue={point.label}
-                    onBlur={(event) => void renamePoint(point, event.target.value)}
-                  />
+                    onClick={() => {
+                      blurFocus();
+                      setMmOpen(false);
+                      setRenamingId(point.id);
+                    }}
+                  >
+                    {point.label}
+                  </button>
                   <p className={`flex-1 text-sm ${count < 2 ? "text-danger" : "text-steel"}`}>
                     {count === 1 ? "1 foto — segna lo stesso punto su almeno un’altra" : `${count} foto`}
                   </p>
@@ -277,16 +290,21 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
               </select>
             </label>
           </div>
-          <label className="text-sm font-semibold">
+          <div className="text-sm font-semibold">
             Distanza (mm)
-            <input
-              className="input mt-1"
-              inputMode="decimal"
-              value={distance}
-              onChange={(event) => setDistance(event.target.value)}
-              placeholder="930"
-            />
-          </label>
+            <button
+              type="button"
+              className="input mt-1 text-left"
+              aria-label="Distanza in millimetri"
+              onClick={() => {
+                blurFocus();
+                setRenamingId(null);
+                setMmOpen(true);
+              }}
+            >
+              {distance ? `${distance} mm` : "Tocca per i millimetri"}
+            </button>
+          </div>
           <label className="text-sm font-semibold">
             Nota
             <input
@@ -320,8 +338,25 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
           ))}
         </ul>
       </section>
+      {mmOpen ? (
+        <MmKeypad value={distance} onChange={setDistance} onOk={() => setMmOpen(false)} />
+      ) : null}
+      {renaming ? (
+        <div className="pad-dock" role="dialog" aria-label={`Nome del punto ${renaming.label}`}>
+          <LetterStrip
+            value={renaming.label}
+            onChange={(name) => void renamePoint(renaming, name)}
+            onDismiss={() => setRenamingId(null)}
+          />
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function blurFocus() {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement) active.blur();
 }
 
 function formatMm(value: number) {

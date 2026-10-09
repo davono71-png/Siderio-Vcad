@@ -51,11 +51,10 @@ export function WorkScreen({ projectId }: { projectId: string }) {
             <div className="mt-4 h-2 rounded-full bg-paper-dark" aria-hidden />
           )}
           <p className="mt-4 text-sm text-steel">
-            Il passo successivo è caricare le foto su Supabase e accodare il job su RunPod. Qui compariranno coda,
-            avanzamento e messaggi di errore.
+            L’invio al motore e i file calcolati sono nella pagina dei risultati.
           </p>
-          <Link href={`/rilievo/${projectId}/modello`} className="btn-secondary mt-4 inline-flex">
-            Anteprima 3D
+          <Link href={`/rilievo/${projectId}/risultati`} className="btn-secondary mt-4 inline-flex">
+            Risultati
           </Link>
         </section>
       ) : null}

@@ -61,15 +61,20 @@ export function HomeScreen() {
       <ul className="mt-6 flex flex-col gap-3">
         {projects?.map((project) => (
           <li key={project.id}>
-            <Link href={`/rilievo/${project.id}`} className="notebook-card block p-4">
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="font-serif text-2xl leading-tight">{project.name}</h2>
-                <span className="chip shrink-0">{kindLabel(project.kind)}</span>
-              </div>
-              <p className="mt-2 text-sm text-steel">
-                {project.photos === 1 ? "1 foto" : `${project.photos} foto`} · {formatWhen(project.updatedAt)}
-              </p>
-            </Link>
+            <div className="notebook-card p-4">
+              <Link href={`/rilievo/${project.id}`} className="block">
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="font-serif text-2xl leading-tight">{project.name}</h2>
+                  <span className="chip shrink-0">{kindLabel(project.kind)}</span>
+                </div>
+                <p className="mt-2 text-sm text-steel">
+                  {project.photos === 1 ? "1 foto" : `${project.photos} foto`} · {formatWhen(project.updatedAt)}
+                </p>
+              </Link>
+              <Link href={`/rilievo/${project.id}/risultati`} className="btn-secondary mt-3 inline-flex">
+                Risultati
+              </Link>
+            </div>
           </li>
         ))}
       </ul>

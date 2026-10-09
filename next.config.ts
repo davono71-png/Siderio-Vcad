@@ -27,6 +27,10 @@ const nextConfig: NextConfig = {
       source: "/api/storage/:path*",
       headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
     },
+    {
+      source: "/api/rilievi/:path*",
+      headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+    },
   ],
 };
 
