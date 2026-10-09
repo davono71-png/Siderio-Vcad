@@ -1,7 +1,7 @@
 import { getRepository } from "../data";
 import type { PhotoMeta, UploadRecord, UploadSummary } from "../data/types";
-import { buildProjectDocument } from "../export/document";
-import { MAX_JPEG_BYTES, MAX_JSON_BYTES } from "../storage/keys";
+import { MAX_JPEG_BYTES } from "../storage/keys";
+import { syncSurvey } from "../sync/client";
 import { isPermanentPresignError, PresignError, putRemote } from "./remote";
 
 const listeners = new Set<() => void>();
@@ -147,15 +147,12 @@ async function send(record: UploadRecord) {
       return;
     }
 
-    const document = await buildProjectDocument(repo, record.projectId);
-    const json = JSON.stringify(document);
-    const blob = new Blob([json], { type: "application/json" });
-    if (blob.size > MAX_JSON_BYTES) {
-      await repo.finishUpload(record.id, false, "too_big", true);
+    const synced = await syncSurvey(record.projectId);
+    if (synced === "ok" || synced === "missing") {
+      await repo.finishUpload(record.id, true, null, false);
       return;
     }
-    await putRemote(record.key, blob, "application/json");
-    await repo.finishUpload(record.id, true, null, false);
+    await repo.finishUpload(record.id, false, synced, false);
   } catch (error) {
     const coded = error instanceof PresignError ? error : new PresignError("network", 0);
     await repo.finishUpload(record.id, false, coded.code, isPermanentPresignError(coded));
@@ -173,6 +170,8 @@ export function uploadStatusText(summary: UploadSummary) {
 export function uploadErrorText(code: string | null) {
   if (!code) return null;
   if (code === "missing_env" || code === "bad_account") return "Archivio remoto non configurato su questo server.";
+  if (code === "unconfigured") return "Configura APP_ACCESS_CODE sul server.";
+  if (code === "unauthorized") return "Serve di nuovo il codice di accesso.";
   if (code === "network") return "Rete assente: riprovo da solo.";
   if (code === "denied") return "L’archivio ha rifiutato l’accesso.";
   if (code === "too_big" || code === "bad_size") return "File oltre il limite (25 MB per le foto).";

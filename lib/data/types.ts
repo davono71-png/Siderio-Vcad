@@ -24,6 +24,8 @@ export type Project = {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Last revision known from the archive. The server assigns the next one. */
+  revision?: number;
   job: ProjectJob;
   scaleChecklist: ScaleChecklist;
 };
@@ -101,6 +103,8 @@ export type PhotoMeta = {
   direction: CameraDirection | null;
   motion: PhotoMotion | null;
   quality: PhotoQuality | null;
+  updatedAt?: string;
+  deletedAt?: string | null;
 };
 
 export type PointObservation = {
@@ -118,6 +122,8 @@ export type NotablePoint = {
   projectId: string;
   label: string;
   observations: PointObservation[];
+  updatedAt?: string;
+  deletedAt?: string | null;
 };
 
 export type Measurement = {
@@ -128,6 +134,8 @@ export type Measurement = {
   distanceMm: number;
   note: string;
   createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string | null;
 };
 
 export type NewProjectInput = {
