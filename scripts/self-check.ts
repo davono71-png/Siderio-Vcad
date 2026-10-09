@@ -2,6 +2,7 @@ import { analyzeRgba, textureScores, varianceOfLaplacian } from "../lib/capture/
 import { cameraDirection } from "../lib/capture/direction";
 import { hintFor, pitchBand, selectFrame, type SelectContext } from "../lib/capture/select";
 import { duplicateMeasurement } from "../lib/measure/checks";
+import { editMillimetres, parsePointName, pointNameFromLetter, withLetter, withNextSuffix } from "../lib/measure/entry";
 import { wallSolids } from "../lib/results/scene";
 import { checkPresign, photoObjectKey } from "../lib/storage/keys";
 import { orientedSize, orientedToRaw, readJpegInfo } from "../lib/jpeg";
@@ -158,6 +159,25 @@ const pair: Measurement = {
 };
 assert(duplicateMeasurement([pair], "b", "a")?.id === "1", "coppia di punti duplicata");
 assert(duplicateMeasurement([pair], "a", "c") == null, "coppia diversa");
+
+assert(editMillimetres("", "9") === "9", "prima cifra");
+assert(editMillimetres("0", "5") === "5", "niente zero iniziale");
+assert(editMillimetres("", "comma") === "0,", "virgola iniziale");
+assert(editMillimetres("930", "comma") === "930,", "virgola");
+assert(editMillimetres("930,", "5") === "930,5", "decimale");
+assert(editMillimetres("930,5", "1") === "930,5", "un solo decimale");
+assert(editMillimetres("930,5", "comma") === "930,5", "una sola virgola");
+assert(editMillimetres("930", "back") === "93", "backspace");
+assert(editMillimetres("12", "clear") === "", "azzera");
+assert(editMillimetres("123456", "7") === "123456", "sei cifre intere");
+assert(pointNameFromLetter("b", 0) === "B", "lettera");
+assert(pointNameFromLetter("A", 2) === "A2", "suffisso");
+assert(withLetter("A2", "A") === "A2", "stessa lettera tiene il numero");
+assert(withLetter("A2", "B") === "B", "altra lettera senza numero");
+assert(withNextSuffix("C") === "C1", "più aggiunge 1");
+assert(withNextSuffix("C1") === "C2", "più incrementa");
+const parsed = parsePointName("a12");
+assert(parsed?.letter === "A" && parsed.suffix === 12, "nome con numero");
 
 const key = photoObjectKey("11111111-1111-4111-8111-111111111111", 3, "22222222-2222-4222-8222-222222222222");
 assert(checkPresign({ op: "put", key, contentType: "image/jpeg", contentLength: 1000 }).ok, key);
