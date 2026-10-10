@@ -3,6 +3,10 @@
 export const RESULT_FILES = [
   "walls.step",
   "extra.step",
+  "completo.step",
+  "completo.glb",
+  "oggetti.stl",
+  "oggetti.obj",
   "scene.json",
   "room.json",
   "status.json",
@@ -21,6 +25,7 @@ export type ResultName = (typeof RESULT_FILES)[number];
 
 const VIEW_TYPES: Partial<Record<ResultName, string>> = {
   "room_textured.glb": "model/gltf-binary",
+  "completo.glb": "model/gltf-binary",
   "preview_iso.png": "image/png",
   "preview_top.png": "image/png",
   "preview_plan.png": "image/png",
@@ -41,5 +46,5 @@ export function viewContentType(name: ResultName) {
 }
 
 export function isViewable(name: ResultName) {
-  return name === "room_textured.glb" || name.endsWith(".png");
+  return name.endsWith(".glb") || name.endsWith(".png");
 }

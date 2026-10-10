@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { getRepository } from "@/lib/data";
-import type { Measurement, NotablePoint, PhotoMeta, ProjectKind, ScaleChecklist } from "@/lib/data/types";
+import type { Measurement, NotablePoint, PhotoMeta, ProjectGeometry, ProjectKind, ScaleChecklist } from "@/lib/data/types";
 import { emptyChecklist } from "@/lib/data/types";
 import { createId } from "@/lib/data/id";
 import { kindLabel } from "@/lib/format";
@@ -12,6 +12,7 @@ import { scheduleManifest } from "@/lib/upload/runner";
 import { syncSurvey } from "@/lib/sync/client";
 import { fetchRemotePhoto } from "@/lib/upload/remote";
 import { useCoarsePointer, useWideScreen } from "@/lib/ui/media";
+import { GeometryToggle } from "../project/GeometryToggle";
 import { PageHeader } from "../ui/PageHeader";
 import { Annotator } from "./Annotator";
 import { LetterStrip } from "./LetterStrip";
@@ -31,6 +32,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [checklist, setChecklist] = useState<ScaleChecklist>(emptyChecklist());
   const [kind, setKind] = useState<ProjectKind>("stanza");
+  const [geometry, setGeometry] = useState<ProjectGeometry>("pareti");
   const [name, setName] = useState("");
   const [mmOpen, setMmOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -88,6 +90,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
       setMeasurements(storedMeasurements);
       setChecklist(project.scaleChecklist ?? emptyChecklist());
       setKind(project.kind);
+      setGeometry(project.geometry === "completa" ? "completa" : "pareti");
       setName(project.name);
       setPointA((current) =>
         storedPoints.some((point) => point.id === current) ? current : (storedPoints[0]?.id ?? ""),
@@ -217,6 +220,14 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
     void syncSurvey(projectId);
   }
 
+  async function changeGeometry(complete: boolean) {
+    const next: ProjectGeometry = complete ? "completa" : "pareti";
+    setGeometry(next);
+    await getRepository().updateProject(projectId, { geometry: next });
+    scheduleManifest(projectId);
+    void syncSurvey(projectId);
+  }
+
   async function saveNow() {
     setSaveNote(null);
     const result = await syncSurvey(projectId);
@@ -229,7 +240,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
       const response = await fetch(`/api/rilievi/${projectId}/motore`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: kind }),
+        body: JSON.stringify({ mode: kind, geometry }),
       });
       const body = (await response.json().catch(() => null)) as { ok?: boolean; code?: string } | null;
       if (body?.code === "missing_env") {
@@ -309,6 +320,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
             <button type="button" className="btn-primary bg-accent text-ink" onClick={() => void saveNow()}>
               Salva
             </button>
+            <GeometryToggle checked={geometry === "completa"} onChange={(next) => void changeGeometry(next)} />
             <button type="button" className="btn-secondary" onClick={() => void sendEngine()}>
               Invia al motore
             </button>
@@ -614,6 +626,16 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
             </li>
           ))}
         </ul>
+      </section>
+      <section className="mt-6">
+        <h2 className="font-serif text-2xl">Motore</h2>
+        <div className="mt-3">
+          <GeometryToggle checked={geometry === "completa"} onChange={(next) => void changeGeometry(next)} />
+        </div>
+        <button type="button" className="btn-secondary mt-3 w-full" onClick={() => void sendEngine()}>
+          Invia al motore
+        </button>
+        {engineNote ? <p className="mt-2 text-sm text-steel">{engineNote}</p> : null}
       </section>
       {coarse && mmOpen ? (
         <MmKeypad value={distance} onChange={setDistance} onOk={() => setMmOpen(false)} />

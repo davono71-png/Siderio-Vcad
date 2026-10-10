@@ -31,6 +31,10 @@ class Options:
     # None means "read project.json". stanza is a room; facciata is a wall
     # with the objects in front of it, and does not need a floor or a ceiling.
     mode: str | None = None
+    # pareti keeps today's walls. completa also exports every surface and the
+    # leftover objects. Missing means "read project.json, otherwise pareti".
+    geometry: str = "pareti"
+    geometry_explicit: bool = False
 
     def thread_count(self) -> int:
         import os
@@ -86,6 +90,12 @@ def parse_options(raw) -> Options:
         if mode not in ("stanza", "facciata"):
             raise ValueError("options.mode deve essere stanza o facciata.")
         opt.mode = mode
+    if raw.get("geometry") not in (None, ""):
+        geometry = str(raw.get("geometry")).strip().lower()
+        if geometry not in ("pareti", "completa"):
+            raise ValueError("options.geometry deve essere pareti o completa.")
+        opt.geometry = geometry
+        opt.geometry_explicit = True
     return opt
 
 
@@ -104,6 +114,30 @@ def project_kind(project: dict) -> str | None:
             if isinstance(value, str) and value.strip():
                 return value.strip().lower()
     return None
+
+
+def project_geometry(project: dict) -> str | None:
+    """Geometry stored by the app, if the file has one."""
+    if not isinstance(project, dict):
+        return None
+    block = project.get("project") if isinstance(project.get("project"), dict) else {}
+    for source in (block, project):
+        value = source.get("geometry")
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return None
+
+
+def resolve_geometry(options: Options, project: dict) -> str:
+    """options.geometry wins when the job set it. Otherwise project.json, otherwise walls only."""
+    if options.geometry_explicit:
+        return options.geometry
+    stored = project_geometry(project)
+    if stored is None:
+        return "pareti"
+    if stored not in ("pareti", "completa"):
+        raise ValueError(f"project.geometry '{stored}' non è pareti o completa.")
+    return stored
 
 
 def resolve_mode(options: Options, project: dict) -> str:

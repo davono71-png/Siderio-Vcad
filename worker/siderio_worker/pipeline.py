@@ -8,8 +8,8 @@ import shutil
 import time
 import traceback
 
-from . import export_mesh, facade, openmvs, prep, r2, room, scale, sfm, walls
-from .options import Options, resolve_mode
+from . import complete, export_mesh, facade, openmvs, prep, r2, room, scale, sfm, walls
+from .options import Options, resolve_geometry, resolve_mode
 from .previews import write_previews
 from .status import StatusWriter
 
@@ -39,7 +39,8 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
             project, photo_paths = _acquire(project_id, options, work)
         _check_id(project, project_id, options)
         mode = resolve_mode(options, project)
-        print(f"[pipeline] mode {mode}", flush=True)
+        geometry = resolve_geometry(options, project)
+        print(f"[pipeline] mode {mode} geometry {geometry}", flush=True)
         stage = "prep"
         status.update(stage, 8, "Preparo le immagini, senza ruotare l'EXIF", timings)
         with _timed(timings, "prep"):
@@ -163,6 +164,30 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                         options.cut_openings,
                     )
                     room_mm = room.to_millimetres(model_room, mm_per_unit)
+                if geometry == "completa":
+                    status.update(stage, 96, "Segmento tutte le superfici e gli oggetti", timings)
+                    points_mm, normals_mm = complete.to_scene_mm(
+                        points,
+                        normals,
+                        model_room["transform_colmap_to_room"],
+                        mm_per_unit,
+                    )
+                    complete_report = complete.export_complete(
+                        points_mm,
+                        normals_mm,
+                        complete.scene_up(mode),
+                        mode,
+                        out_dir,
+                    )
+                    room_mm["geometry"] = "completa"
+                    room_mm["surfaces"] = complete_report["surfaces"]
+                    room_mm["residual"] = complete_report["residual"]
+                    room_mm["glbUp"] = "Y"
+                    frame = (
+                        "Le lastre di completo.step usano lo stesso sistema di walls.step. "
+                        "completo.glb ha l’asse verticale Y."
+                    )
+                    room_mm["note"] = f"{room_mm.get('note')} {frame}".strip() if room_mm.get("note") else frame
                 room_mm["scale"] = {
                     "mmPerUnit": mm_per_unit,
                     "rmsResidMm": report["rms_resid_mm"],
@@ -172,7 +197,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 if report.get("warning"):
                     room_mm["scale"]["warning"] = report["warning"]
                 _write_json(os.path.join(out_dir, "room.json"), room_mm)
-                if mode == "facciata":
+                if mode == "facciata" or room_mm.get("surfaces"):
                     _write_json(os.path.join(out_dir, "scene.json"), room_mm)
                 write_previews(out_dir, room_mm)
         diagnostic = _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options, mode)
@@ -438,6 +463,10 @@ def _present(out_dir: str) -> list[str]:
         if filename.startswith("preview_") or filename in {
             "walls.step",
             "extra.step",
+            "completo.step",
+            "completo.glb",
+            "oggetti.stl",
+            "oggetti.obj",
             "room_textured.glb",
             "room_textured_obj.zip",
             "room_dense.ply",

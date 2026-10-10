@@ -268,6 +268,19 @@ const legacy = parseSurveyDocument({
   measurements: [{ id: "m9", pointA: "p9", pointB: "p9", distanceMm: 1000, createdAt: "2026-10-01T00:00:00.000Z" }],
 });
 assert(legacy?.revision === 0 && legacy.points[0]?.updatedAt === "2026-10-01T00:00:00.000Z", "un project.json vecchio riceve revisione 0 e la data del rilievo");
+assert(legacy?.project.geometry === "pareti", "senza geometry si resta sulle pareti");
+const withGeometry = parseSurveyDocument({
+  version: 2,
+  project: {
+    id: "8ad293ef-50fe-4329-a7dd-8e3eb0380b28",
+    name: "Ufficio",
+    kind: "facciata",
+    geometry: "completa",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    createdAt: "2026-10-01T00:00:00.000Z",
+  },
+});
+assert(withGeometry?.project.geometry === "completa", "geometry completa resta nel project.json");
 
 const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const previousKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -350,6 +363,7 @@ function surveyDoc(partial: Partial<SurveyDocument> & { points?: SurveyDocument[
       id: "8ad293ef-50fe-4329-a7dd-8e3eb0380b28",
       name: "Ufficio",
       kind: "facciata",
+      geometry: "pareti",
       notes: "",
       createdAt: "2026-10-01T00:00:00.000Z",
       updatedAt: "2026-10-09T10:00:00.000Z",

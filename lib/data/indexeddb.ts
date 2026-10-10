@@ -221,6 +221,7 @@ function normalizeProject(project: Project): Project {
     ...project,
     revision: typeof project.revision === "number" && Number.isFinite(project.revision) ? project.revision : 0,
     scaleChecklist: asChecklist(project.scaleChecklist),
+    geometry: project.geometry === "completa" ? "completa" : "pareti",
   };
 }
 
@@ -268,6 +269,7 @@ export class IndexedDbRepository implements RilievoRepository {
       id: createId(),
       name: input.name.trim() || "Senza nome",
       kind: input.kind,
+      geometry: "pareti",
       notes: input.notes.trim(),
       createdAt: now,
       updatedAt: now,
@@ -516,6 +518,7 @@ export class IndexedDbRepository implements RilievoRepository {
           id: projectId,
           name: document.project.name,
           kind: document.project.kind,
+          geometry: document.project.geometry === "completa" ? "completa" : "pareti",
           notes: document.project.notes,
           createdAt: document.project.createdAt,
           updatedAt: document.project.updatedAt,
