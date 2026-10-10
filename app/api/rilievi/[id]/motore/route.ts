@@ -28,11 +28,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!env) return Response.json({ ok: false, code: "missing_env" }, { status: 503, headers });
 
   let mode: "stanza" | "facciata" = "facciata";
+  let geometry: "pareti" | "completa" = "pareti";
   try {
-    const body = (await request.json()) as { mode?: string };
+    const body = (await request.json()) as { mode?: string; geometry?: string };
     if (body?.mode === "stanza" || body?.mode === "facciata") mode = body.mode;
+    if (body?.geometry === "completa" || body?.geometry === "pareti") geometry = body.geometry;
   } catch {
-    /* An empty body still sends the rilievo, using the facade mode. */
+    /* An empty body still sends the rilievo, using the facade mode and walls only. */
   }
 
   try {
@@ -42,7 +44,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         authorization: `Bearer ${env.key}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ input: { projectId: id, options: { mode } } }),
+      body: JSON.stringify({ input: { projectId: id, options: { mode, geometry } } }),
     });
     const payload = (await response.json().catch(() => null)) as { id?: string; status?: string; error?: string } | null;
     if (!response.ok || !payload?.id) {
