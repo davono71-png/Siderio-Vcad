@@ -4,11 +4,41 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { getRepository } from "@/lib/data";
-import type { Project } from "@/lib/data/types";
+import type { ProjectKind } from "@/lib/data/types";
 import { formatWhen, kindLabel } from "@/lib/format";
+import { fetchRemoteSurveys, syncSurvey, type RemoteCard } from "@/lib/sync/client";
 import { Toast } from "../ui/Toast";
 
-type Card = Project & { photos: number };
+type Card = {
+  id: string;
+  name: string;
+  kind: ProjectKind;
+  updatedAt: string;
+  photos: number;
+};
+
+function mergeCards(local: Card[], remote: RemoteCard[]) {
+  const byId = new Map<string, Card>();
+  for (const item of remote) {
+    byId.set(item.id, {
+      id: item.id,
+      name: item.name,
+      kind: item.kind,
+      updatedAt: item.updatedAt,
+      photos: item.photos,
+    });
+  }
+  for (const item of local) {
+    const previous = byId.get(item.id);
+    if (!previous) {
+      byId.set(item.id, item);
+      continue;
+    }
+    const newer = item.updatedAt >= previous.updatedAt ? item : previous;
+    byId.set(item.id, { ...newer, photos: Math.max(item.photos, previous.photos) });
+  }
+  return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
 
 export function HomeScreen() {
   const [projects, setProjects] = useState<Card[] | null>(null);
@@ -16,23 +46,66 @@ export function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    async function load() {
       try {
         const repo = getRepository();
         const list = await repo.listProjects();
-        const cards = await Promise.all(
+        const local = await Promise.all(
           list.map(async (project) => {
             const photos = await repo.listPhotos(project.id);
-            return { ...project, photos: photos.filter((photo) => photo.accepted).length };
+            return {
+              id: project.id,
+              name: project.name,
+              kind: project.kind,
+              updatedAt: project.updatedAt,
+              photos: photos.filter((photo) => photo.accepted).length,
+            };
           }),
         );
-        if (!cancelled) setProjects(cards);
+        const remote = await fetchRemoteSurveys();
+        if (cancelled) return;
+        if (!remote.ok && remote.code !== "unauthorized" && remote.code !== "forbidden" && remote.code !== "unconfigured") {
+          setError("Archivio remoto non disponibile. Mostro i rilievi di questo dispositivo.");
+        } else {
+          setError(null);
+        }
+        setProjects(mergeCards(local, remote.ok ? remote.surveys : []));
+        for (const project of local) {
+          if (cancelled) return;
+          await syncSurvey(project.id);
+        }
+        if (cancelled) return;
+        const again = await repo.listProjects();
+        const refreshed = await Promise.all(
+          again.map(async (project) => {
+            const photos = await repo.listPhotos(project.id);
+            return {
+              id: project.id,
+              name: project.name,
+              kind: project.kind,
+              updatedAt: project.updatedAt,
+              photos: photos.filter((photo) => photo.accepted).length,
+            };
+          }),
+        );
+        const remoteAgain = await fetchRemoteSurveys();
+        if (cancelled) return;
+        setProjects(mergeCards(refreshed, remoteAgain.ok ? remoteAgain.surveys : remote.ok ? remote.surveys : []));
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "Archivio locale non disponibile.");
       }
-    })();
+    }
+    void load();
+    const onFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
     };
   }, []);
 
@@ -43,7 +116,7 @@ export function HomeScreen() {
       </header>
       <h1 className="font-serif text-4xl tracking-tight">Rilievi</h1>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-steel">
-        Fotografa una stanza o una facciata. Le foto restano sul telefono, pronte per il modello 3D.
+        Fotografa una stanza o una facciata. L’archivio tiene punti e quote, così lo stesso rilievo si apre anche dal computer.
       </p>
 
       {error ? <Toast message={error} /> : null}

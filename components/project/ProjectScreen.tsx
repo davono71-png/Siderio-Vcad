@@ -8,6 +8,8 @@ import { getRepository } from "@/lib/data";
 import type { PhotoMeta, Project, ProjectKind } from "@/lib/data/types";
 import { formatWhen, kindLabel } from "@/lib/format";
 import { scheduleManifest } from "@/lib/upload/runner";
+import { deleteRemoteSurvey, syncSurvey } from "@/lib/sync/client";
+import { fetchRemotePhoto } from "@/lib/upload/remote";
 import { UploadStatus } from "../upload/UploadStatus";
 import { PageHeader } from "../ui/PageHeader";
 import { Sheet } from "../ui/Sheet";
@@ -24,7 +26,21 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tick, setTick] = useState(0);
   const projectRef = useRef<Project | null>(null);
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      setTick((value) => value + 1);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, []);
 
   useEffect(() => {
     projectRef.current = project;
@@ -35,6 +51,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     const urls: string[] = [];
     void (async () => {
       const repo = getRepository();
+      await syncSurvey(projectId);
+      if (cancelled) return;
       const stored = await repo.getProject(projectId);
       if (cancelled) return;
       if (!stored) {
@@ -52,11 +70,17 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       const next: Thumb[] = [];
       for (const photo of photos.filter((item) => item.accepted)) {
         const blob = thumbById.get(photo.id);
-        if (!blob) continue;
-        const url = URL.createObjectURL(blob);
+        let url: string | null = null;
+        if (blob) url = URL.createObjectURL(blob);
+        else if (photo.r2Key) {
+          const remote = await fetchRemotePhoto(photo.r2Key);
+          if (remote) url = URL.createObjectURL(remote);
+        }
+        if (!url) continue;
         urls.push(url);
         next.push({ photo, url });
       }
+      setMissing(false);
       setProject(stored);
       setThumbs(next);
       setPoints(storedPoints.length);
@@ -66,7 +90,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       cancelled = true;
       for (const url of urls) URL.revokeObjectURL(url);
     };
-  }, [projectId]);
+  }, [projectId, tick]);
 
   async function save(patch: { name?: string; kind?: ProjectKind; notes?: string }) {
     const current = projectRef.current;
@@ -96,6 +120,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   }
 
   async function onDelete() {
+    await deleteRemoteSurvey(projectId);
     await getRepository().deleteProject(projectId);
     router.push("/");
   }
@@ -207,7 +232,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
 
       {confirmDelete ? (
         <Sheet title="Eliminare il rilievo?" onClose={() => setConfirmDelete(false)}>
-          <p className="text-sm text-steel">Foto, punti e quote verranno cancellati da questo dispositivo.</p>
+          <p className="text-sm text-steel">Foto, punti e quote verranno cancellati da questo dispositivo e dall’archivio.</p>
           <button type="button" className="btn-danger mt-4 w-full" onClick={() => void onDelete()}>
             Elimina
           </button>

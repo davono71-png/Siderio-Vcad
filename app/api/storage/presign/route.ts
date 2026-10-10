@@ -1,3 +1,4 @@
+import { requireAccess } from "@/lib/auth/session";
 import { checkPresign, type PresignInput } from "@/lib/storage/keys";
 import { presignObject, StorageConfigError } from "@/lib/storage/r2";
 
@@ -6,8 +7,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Short-lived PUT/GET URLs for rilievi/<uuid>/… only.
- * There is no user auth yet (Supabase Auth comes later). Inputs are checked
- * so this is not a general write proxy: jpeg or project.json, size cap, 10 min.
+ * The Siderio Suite session is required. Inputs are checked so this is not a general
+ * write proxy: jpeg or project.json, size cap, 10 min.
  */
 
 const hits = new Map<string, number[]>();
@@ -27,6 +28,8 @@ function allowed(ip: string) {
 }
 
 export async function POST(request: Request) {
+  const denied = await requireAccess(request);
+  if (denied) return denied;
   if (!allowed(clientIp(request))) {
     return Response.json({ ok: false, code: "rate_limited" }, { status: 429, headers: { "cache-control": "no-store" } });
   }

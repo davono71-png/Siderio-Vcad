@@ -1,9 +1,14 @@
+import { isAdministrator } from "../lib/auth/admin";
+import { supabasePublicConfig } from "../lib/auth/config";
 import { analyzeRgba, textureScores, varianceOfLaplacian } from "../lib/capture/analyze";
 import { cameraDirection } from "../lib/capture/direction";
 import { hintFor, pitchBand, selectFrame, type SelectContext } from "../lib/capture/select";
 import { duplicateMeasurement } from "../lib/measure/checks";
 import { editMillimetres, parsePointName, pointNameFromLetter, withLetter, withNextSuffix } from "../lib/measure/entry";
 import { wallSolids } from "../lib/results/scene";
+import { parseSurveyDocument, type SurveyDocument } from "../lib/sync/document";
+import { mergeDocuments } from "../lib/sync/merge";
+import { commitSurvey, readSurvey } from "../lib/sync/store";
 import { checkPresign, photoObjectKey } from "../lib/storage/keys";
 import { orientedSize, orientedToRaw, readJpegInfo } from "../lib/jpeg";
 import type { Measurement } from "../lib/data/types";
@@ -218,7 +223,141 @@ assert(office[0].holes.length === 1, "porta ritagliata");
 assert(office[0].holes[0].v0 > 0 && office[0].holes[0].v0 < 0.01, "la porta non tocca il bordo della mesh");
 assert(office[1].holes.length === 0, "il ritorno non ha aperture");
 
-console.log("self-check ok");
+const phone = surveyDoc({
+  revision: 1,
+  points: [surveyPoint("p1", "A", "2026-10-09T10:00:00.000Z", [{ photoId: "f1", x: 10, y: 20, rawX: 10, rawY: 20 }])],
+  measurements: [],
+});
+const desk = surveyDoc({
+  revision: 1,
+  points: [surveyPoint("p2", "B", "2026-10-09T10:05:00.000Z", [{ photoId: "f1", x: 30, y: 40, rawX: 30, rawY: 40 }])],
+  measurements: [surveyMeasure("m1", "p1", "p2", 930, "2026-10-09T10:06:00.000Z")],
+});
+const merged = mergeDocuments(phone, desk);
+assert(merged.points.map((point) => point.id).sort().join() === "p1,p2", "due dispositivi tengono entrambi i punti");
+assert(merged.measurements.length === 1 && merged.measurements[0]?.distanceMm === 930, "la quota del computer resta");
+assert(!merged.points.some((point) => "deletedAt" in point), "i punti vivi non portano il tombstone");
+
+const renamed = surveyDoc({
+  points: [surveyPoint("p1", "A1", "2026-10-09T11:00:00.000Z", [{ photoId: "f1", x: 10, y: 20, rawX: 10, rawY: 20 }])],
+});
+const observed = surveyDoc({
+  points: [surveyPoint("p1", "A", "2026-10-09T10:30:00.000Z", [{ photoId: "f2", x: 4, y: 5, rawX: 4, rawY: 5 }])],
+});
+const bothViews = mergeDocuments(renamed, observed);
+const kept = bothViews.points[0];
+assert(kept?.label === "A1", "il nome più recente vince");
+assert(kept?.observations.length === 2, "le osservazioni su foto diverse restano entrambe");
+
+const deleted = mergeDocuments(phone, {
+  ...phone,
+  points: [],
+  tombstones: { photos: [], points: [{ id: "p1", deletedAt: "2026-10-09T12:00:00.000Z" }], measurements: [] },
+});
+assert(deleted.points.length === 0 && deleted.tombstones.points[0]?.id === "p1", "un tombstone più recente toglie il punto");
+
+const resurrected = mergeDocuments(deleted, surveyDoc({
+  points: [surveyPoint("p1", "A", "2026-10-09T13:00:00.000Z", [{ photoId: "f1", x: 1, y: 1, rawX: 1, rawY: 1 }])],
+}));
+assert(resurrected.points.length === 1 && resurrected.tombstones.points.length === 0, "una modifica successiva ripristina il punto");
+
+const legacy = parseSurveyDocument({
+  version: 2,
+  project: { id: "8ad293ef-50fe-4329-a7dd-8e3eb0380b28", name: "Ufficio", kind: "facciata", updatedAt: "2026-10-01T00:00:00.000Z", createdAt: "2026-10-01T00:00:00.000Z" },
+  points: [{ id: "p9", label: "A", observations: [{ photoId: "f1", x: 2, y: 3, rawX: 2, rawY: 3 }] }],
+  measurements: [{ id: "m9", pointA: "p9", pointB: "p9", distanceMm: 1000, createdAt: "2026-10-01T00:00:00.000Z" }],
+});
+assert(legacy?.revision === 0 && legacy.points[0]?.updatedAt === "2026-10-01T00:00:00.000Z", "un project.json vecchio riceve revisione 0 e la data del rilievo");
+
+const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const previousKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const previousRule = process.env.VCAD_ADMIN_RULE;
+delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+delete process.env.VCAD_ADMIN_RULE;
+assert(supabasePublicConfig()?.url === "https://kvsrnxsaajsdmkikipjl.supabase.co", "l'URL di Suite è il default");
+assert(supabasePublicConfig()?.key.startsWith("sb_publishable_") === true, "la chiave pubblica è il default");
+assert(isAdministrator(null) === false, "senza profilo non si entra");
+assert(isAdministrator({ is_master: true, ruolo: "Manager" }) === true, "is_master è l'amministratore");
+assert(isAdministrator({ is_master: false, ruolo: "Manager" }) === false, "Manager senza is_master non entra");
+assert(isAdministrator({ is_master: false, ruolo: "Amministrazione" }) === false, "Amministrazione non è l'amministratore");
+assert(isAdministrator({ is_master: null, ruolo: "Proprietà" }) === false, "is_master nullo non entra");
+process.env.VCAD_ADMIN_RULE = "ruolo:Manager";
+assert(isAdministrator({ is_master: false, ruolo: "Manager" }) === true, "la regola ruolo:Manager allarga l'accesso");
+assert(isAdministrator({ is_master: true, ruolo: "Amministrazione" }) === false, "con solo ruolo:Manager is_master non basta");
+process.env.VCAD_ADMIN_RULE = "is_master,ruolo:Manager";
+assert(isAdministrator({ is_master: true, ruolo: "Operatore" }) === true, "le regole si combinano");
+assert(isAdministrator({ is_master: false, ruolo: "Manager" }) === true, "le regole si combinano sul ruolo");
+process.env.VCAD_ADMIN_RULE = "sconosciuta";
+assert(isAdministrator({ is_master: true, ruolo: "Manager" }) === false, "una regola sconosciuta chiude");
+process.env.NEXT_PUBLIC_SUPABASE_URL = "";
+assert(supabasePublicConfig() === null, "un URL vuoto chiude");
+process.env.NEXT_PUBLIC_SUPABASE_URL = "http://kvsrnxsaajsdmkikipjl.supabase.co";
+assert(supabasePublicConfig() === null, "un URL non https chiude");
+delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "  ";
+assert(supabasePublicConfig() === null, "una chiave vuota chiude");
+if (previousUrl == null) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+else process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+if (previousKey == null) delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+else process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = previousKey;
+if (previousRule == null) delete process.env.VCAD_ADMIN_RULE;
+else process.env.VCAD_ADMIN_RULE = previousRule;
+
+process.env.SIDERO_SYNC_MEMORY = "1";
+void (async () => {
+  const savedFirst = await commitSurvey(phone.project.id, 0, phone);
+  const savedSecond = await commitSurvey(phone.project.id, 0, desk);
+  assert(!savedFirst.conflict && savedFirst.document.revision === 1, "il primo salvataggio prende la revisione 1");
+  assert(savedSecond.conflict && savedSecond.document?.revision === 1, "la stessa revisione va in conflitto");
+  if (!savedSecond.conflict || !savedSecond.document) throw new Error("conflitto atteso");
+  const retried = mergeDocuments(desk, savedSecond.document);
+  const third = await commitSurvey(phone.project.id, savedSecond.document.revision, retried);
+  assert(!third.conflict, "dopo il merge il salvataggio riprova");
+  const stored = await readSurvey(phone.project.id);
+  assert(stored?.points.length === 2 && stored.measurements.some((item) => item.id === "m1"), "il conflitto unisce punti e quota");
+  delete process.env.SIDERO_SYNC_MEMORY;
+  console.log("self-check ok");
+})();
+
+function surveyPoint(
+  id: string,
+  label: string,
+  updatedAt: string,
+  observations: SurveyDocument["points"][number]["observations"],
+): SurveyDocument["points"][number] {
+  return { id, label, updatedAt, observations };
+}
+
+function surveyMeasure(id: string, pointA: string, pointB: string, distanceMm: number, updatedAt: string): SurveyDocument["measurements"][number] {
+  return { id, pointA, pointB, labelA: null, labelB: null, distanceMm, note: "", createdAt: updatedAt, updatedAt };
+}
+
+function surveyDoc(partial: Partial<SurveyDocument> & { points?: SurveyDocument["points"]; measurements?: SurveyDocument["measurements"] }): SurveyDocument {
+  return {
+    version: 2,
+    app: "Siderio Vcad",
+    exportedAt: "2026-10-09T10:00:00.000Z",
+    coordinateSpace: "test",
+    revision: partial.revision ?? 0,
+    updatedAt: "2026-10-09T10:00:00.000Z",
+    deletedAt: null,
+    photos: partial.photos ?? [],
+    points: partial.points ?? [],
+    measurements: partial.measurements ?? [],
+    tombstones: partial.tombstones ?? { photos: [], points: [], measurements: [] },
+    project: partial.project ?? {
+      id: "8ad293ef-50fe-4329-a7dd-8e3eb0380b28",
+      name: "Ufficio",
+      kind: "facciata",
+      notes: "",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-09T10:00:00.000Z",
+      job: { status: "non_inviato", message: "", progress: null, updatedAt: "2026-10-09T10:00:00.000Z" },
+      scaleChecklist: { lunghezza: false, larghezza: false, altezza: false },
+    },
+  };
+}
 
 function jpegWithOrientation(orientation: number, width: number, height: number) {
   const exif = new Uint8Array([

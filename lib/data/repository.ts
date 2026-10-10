@@ -1,3 +1,4 @@
+import type { SurveyDocument } from "../sync/document";
 import type {
   Measurement,
   NewPhotoInput,
@@ -32,12 +33,18 @@ export interface RilievoRepository {
   deletePhoto(id: string): Promise<void>;
 
   listPoints(projectId: string): Promise<NotablePoint[]>;
+  listAllPoints(projectId: string): Promise<NotablePoint[]>;
   upsertPoint(point: NotablePoint): Promise<void>;
   deletePoint(id: string): Promise<void>;
 
   listMeasurements(projectId: string): Promise<Measurement[]>;
+  listAllMeasurements(projectId: string): Promise<Measurement[]>;
   upsertMeasurement(measurement: Measurement): Promise<void>;
   deleteMeasurement(id: string): Promise<void>;
+
+  listAllPhotos(projectId: string): Promise<PhotoMeta[]>;
+  /** Writes a merged archive document without bumping timestamps that are already set. */
+  importSurvey(document: SurveyDocument): Promise<void>;
 
   /**
    * Placeholder for the GPU worker queue. Photos may already be in R2;

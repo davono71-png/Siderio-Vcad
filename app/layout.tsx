@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { DM_Sans, Source_Serif_4 } from "next/font/google";
+import { AccessGate } from "@/components/auth/AccessGate";
 import { RegisterSW } from "@/components/pwa/RegisterSW";
 import { UploadManager } from "@/components/upload/UploadManager";
 import "./globals.css";
@@ -51,8 +52,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
     <html lang="it" className={`${dmSans.variable} ${sourceSerif.variable} h-full antialiased`}>
       <body className="min-h-full bg-paper text-ink">
         <RegisterSW />
-        <UploadManager />
-        {children}
+        <AccessGate>
+          <UploadManager />
+          {children}
+        </AccessGate>
       </body>
     </html>
   );

@@ -1,3 +1,4 @@
+import { requireAccess } from "@/lib/auth/session";
 import { isResultName } from "@/lib/results/files";
 import { configError, downloadUrl } from "@/lib/results/load";
 import { isUuid } from "@/lib/storage/keys";
@@ -6,6 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const denied = await requireAccess(request);
+  if (denied) return denied;
   const { id } = await context.params;
   const name = new URL(request.url).searchParams.get("file") ?? "";
   if (!isUuid(id) || !isResultName(name)) {

@@ -2,6 +2,13 @@ import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { createId } from "./id";
 import { freshJob, type RilievoRepository } from "./repository";
 import { photoObjectKey, manifestObjectKey } from "../storage/keys";
+import {
+  measurementFromSurvey,
+  photoMetaFromSurvey,
+  pointFromSurvey,
+  timeOf,
+  type SurveyDocument,
+} from "../sync/document";
 import type {
   Measurement,
   NewPhotoInput,
@@ -210,7 +217,11 @@ function asWarnings(photo: PhotoMeta): PhotoWarning[] {
 }
 
 function normalizeProject(project: Project): Project {
-  return { ...project, scaleChecklist: asChecklist(project.scaleChecklist) };
+  return {
+    ...project,
+    revision: typeof project.revision === "number" && Number.isFinite(project.revision) ? project.revision : 0,
+    scaleChecklist: asChecklist(project.scaleChecklist),
+  };
 }
 
 function normalizePhoto(photo: PhotoMeta): PhotoMeta {
@@ -262,6 +273,7 @@ export class IndexedDbRepository implements RilievoRepository {
       updatedAt: now,
       job: freshJob(),
       scaleChecklist: emptyChecklist(),
+      revision: 0,
     };
     await database.put("projects", project);
     return project;
@@ -305,6 +317,11 @@ export class IndexedDbRepository implements RilievoRepository {
   }
 
   async listPhotos(projectId: string) {
+    const photos = await this.listAllPhotos(projectId);
+    return photos.filter((photo) => !photo.deletedAt);
+  }
+
+  async listAllPhotos(projectId: string) {
     const database = await db();
     const photos = await database.getAllFromIndex("photos", "by-project", projectId);
     return photos.map(normalizePhoto).sort(bySequence);
@@ -371,30 +388,30 @@ export class IndexedDbRepository implements RilievoRepository {
   async deletePhoto(id: string) {
     const database = await db();
     const meta = await database.get("photos", id);
-    if (!meta) return;
-    const points = await database.getAllFromIndex("points", "by-project", meta.projectId);
+    if (!meta || meta.deletedAt) return;
+    const now = new Date().toISOString();
     const tx = database.transaction(
-      ["photos", "photoBlobs", "photoThumbs", "points", "projects", "uploads"],
+      ["photos", "photoBlobs", "photoThumbs", "projects", "uploads"],
       "readwrite",
     );
-    await tx.objectStore("photos").delete(id);
+    await tx.objectStore("photos").put({ ...meta, deletedAt: now, updatedAt: now, localBlob: false });
     await tx.objectStore("photoBlobs").delete(id);
     await tx.objectStore("photoThumbs").delete(id);
     await tx.objectStore("uploads").delete(id);
-    for (const point of points) {
-      const observations = point.observations.filter((item) => item.photoId !== id);
-      if (observations.length === point.observations.length) continue;
-      await tx.objectStore("points").put({ ...point, observations });
-    }
     const project = await tx.objectStore("projects").get(meta.projectId);
     if (project) {
-      project.updatedAt = new Date().toISOString();
+      project.updatedAt = now;
       await tx.objectStore("projects").put(project);
     }
     await tx.done;
   }
 
   async listPoints(projectId: string) {
+    const points = await this.listAllPoints(projectId);
+    return points.filter((point) => !point.deletedAt);
+  }
+
+  async listAllPoints(projectId: string) {
     const database = await db();
     const points = await database.getAllFromIndex("points", "by-project", projectId);
     return points.sort((a, b) => a.label.localeCompare(b.label, "it"));
@@ -402,11 +419,12 @@ export class IndexedDbRepository implements RilievoRepository {
 
   async upsertPoint(point: NotablePoint) {
     const database = await db();
+    const now = new Date().toISOString();
     const tx = database.transaction(["points", "projects"], "readwrite");
-    await tx.objectStore("points").put(point);
+    await tx.objectStore("points").put({ ...point, updatedAt: now, deletedAt: null });
     const project = await tx.objectStore("projects").get(point.projectId);
     if (project) {
-      project.updatedAt = new Date().toISOString();
+      project.updatedAt = now;
       await tx.objectStore("projects").put(project);
     }
     await tx.done;
@@ -415,24 +433,31 @@ export class IndexedDbRepository implements RilievoRepository {
   async deletePoint(id: string) {
     const database = await db();
     const point = await database.get("points", id);
-    if (!point) return;
+    if (!point || point.deletedAt) return;
     const measurements = await database.getAllFromIndex("measurements", "by-project", point.projectId);
+    const now = new Date().toISOString();
     const tx = database.transaction(["points", "measurements", "projects"], "readwrite");
-    await tx.objectStore("points").delete(id);
+    await tx.objectStore("points").put({ ...point, deletedAt: now, updatedAt: now });
     for (const measurement of measurements) {
+      if (measurement.deletedAt) continue;
       if (measurement.pointA === id || measurement.pointB === id) {
-        await tx.objectStore("measurements").delete(measurement.id);
+        await tx.objectStore("measurements").put({ ...measurement, deletedAt: now, updatedAt: now });
       }
     }
     const project = await tx.objectStore("projects").get(point.projectId);
     if (project) {
-      project.updatedAt = new Date().toISOString();
+      project.updatedAt = now;
       await tx.objectStore("projects").put(project);
     }
     await tx.done;
   }
 
   async listMeasurements(projectId: string) {
+    const measurements = await this.listAllMeasurements(projectId);
+    return measurements.filter((measurement) => !measurement.deletedAt);
+  }
+
+  async listAllMeasurements(projectId: string) {
     const database = await db();
     const measurements = await database.getAllFromIndex("measurements", "by-project", projectId);
     return measurements.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -440,11 +465,12 @@ export class IndexedDbRepository implements RilievoRepository {
 
   async upsertMeasurement(measurement: Measurement) {
     const database = await db();
+    const now = new Date().toISOString();
     const tx = database.transaction(["measurements", "projects"], "readwrite");
-    await tx.objectStore("measurements").put(measurement);
+    await tx.objectStore("measurements").put({ ...measurement, updatedAt: now, deletedAt: null });
     const project = await tx.objectStore("projects").get(measurement.projectId);
     if (project) {
-      project.updatedAt = new Date().toISOString();
+      project.updatedAt = now;
       await tx.objectStore("projects").put(project);
     }
     await tx.done;
@@ -453,13 +479,120 @@ export class IndexedDbRepository implements RilievoRepository {
   async deleteMeasurement(id: string) {
     const database = await db();
     const measurement = await database.get("measurements", id);
-    if (!measurement) return;
+    if (!measurement || measurement.deletedAt) return;
+    const now = new Date().toISOString();
     const tx = database.transaction(["measurements", "projects"], "readwrite");
-    await tx.objectStore("measurements").delete(id);
+    await tx.objectStore("measurements").put({ ...measurement, deletedAt: now, updatedAt: now });
     const project = await tx.objectStore("projects").get(measurement.projectId);
     if (project) {
-      project.updatedAt = new Date().toISOString();
+      project.updatedAt = now;
       await tx.objectStore("projects").put(project);
+    }
+    await tx.done;
+  }
+
+  async importSurvey(document: SurveyDocument) {
+    const database = await db();
+    const projectId = document.project.id;
+    const [existingProject, existingPhotos, existingPoints, existingMeasurements] = await Promise.all([
+      database.get("projects", projectId),
+      database.getAllFromIndex("photos", "by-project", projectId),
+      database.getAllFromIndex("points", "by-project", projectId),
+      database.getAllFromIndex("measurements", "by-project", projectId),
+    ]);
+    if (
+      document.deletedAt &&
+      timeOf(document.deletedAt) >= timeOf(existingProject?.updatedAt ?? document.project.updatedAt)
+    ) {
+      await this.deleteProject(projectId);
+      return;
+    }
+
+    const localProjectNewer =
+      existingProject != null && timeOf(existingProject.updatedAt) > timeOf(document.project.updatedAt);
+    const project: Project = localProjectNewer
+      ? { ...existingProject, revision: Math.max(existingProject.revision ?? 0, document.revision) }
+      : {
+          id: projectId,
+          name: document.project.name,
+          kind: document.project.kind,
+          notes: document.project.notes,
+          createdAt: document.project.createdAt,
+          updatedAt: document.project.updatedAt,
+          revision: document.revision,
+          job: document.project.job,
+          scaleChecklist: document.project.scaleChecklist,
+        };
+
+    const tx = database.transaction(
+      ["projects", "photos", "photoBlobs", "photoThumbs", "points", "measurements"],
+      "readwrite",
+    );
+    await tx.objectStore("projects").put(project);
+
+    for (const photo of document.photos) {
+      const existing = existingPhotos.find((item) => item.id === photo.id) ?? null;
+      if (existing?.deletedAt && timeOf(existing.deletedAt) > timeOf(photo.updatedAt)) continue;
+      if (existing && !existing.deletedAt && timeOf(existing.updatedAt) > timeOf(photo.updatedAt)) {
+        if (!existing.r2Key && photo.r2Key) {
+          await tx.objectStore("photos").put({ ...existing, r2Key: photo.r2Key, uploadedAt: photo.uploadedAt });
+        }
+        continue;
+      }
+      const meta = photoMetaFromSurvey(photo, projectId, existing);
+      const blob = await tx.objectStore("photoBlobs").get(photo.id);
+      meta.localBlob = Boolean(blob);
+      await tx.objectStore("photos").put(meta);
+    }
+    for (const tomb of document.tombstones.photos) {
+      const existing = existingPhotos.find((item) => item.id === tomb.id);
+      if (!existing) continue;
+      if (existing.updatedAt && timeOf(existing.updatedAt) > timeOf(tomb.deletedAt) && !existing.deletedAt) continue;
+      await tx.objectStore("photos").put({ ...existing, deletedAt: tomb.deletedAt, updatedAt: tomb.deletedAt, localBlob: false });
+      await tx.objectStore("photoBlobs").delete(tomb.id);
+      await tx.objectStore("photoThumbs").delete(tomb.id);
+    }
+
+    for (const point of document.points) {
+      const existing = existingPoints.find((item) => item.id === point.id);
+      if (existing?.deletedAt && timeOf(existing.deletedAt) > timeOf(point.updatedAt)) continue;
+      if (existing && !existing.deletedAt && timeOf(existing.updatedAt) > timeOf(point.updatedAt)) continue;
+      await tx.objectStore("points").put(pointFromSurvey(point, projectId));
+    }
+    for (const tomb of document.tombstones.points) {
+      const existing = existingPoints.find((item) => item.id === tomb.id);
+      if (existing && !existing.deletedAt && timeOf(existing.updatedAt) > timeOf(tomb.deletedAt)) continue;
+      const base = existing ?? pointFromSurvey(
+        { id: tomb.id, label: "", observations: [], updatedAt: tomb.deletedAt },
+        projectId,
+      );
+      await tx.objectStore("points").put({ ...base, deletedAt: tomb.deletedAt, updatedAt: tomb.deletedAt });
+    }
+
+    for (const measurement of document.measurements) {
+      const existing = existingMeasurements.find((item) => item.id === measurement.id);
+      if (existing?.deletedAt && timeOf(existing.deletedAt) > timeOf(measurement.updatedAt)) continue;
+      if (existing && !existing.deletedAt && timeOf(existing.updatedAt) > timeOf(measurement.updatedAt)) continue;
+      await tx.objectStore("measurements").put(measurementFromSurvey(measurement, projectId));
+    }
+    for (const tomb of document.tombstones.measurements) {
+      const existing = existingMeasurements.find((item) => item.id === tomb.id);
+      if (existing && !existing.deletedAt && timeOf(existing.updatedAt) > timeOf(tomb.deletedAt)) continue;
+      const base = existing ?? measurementFromSurvey(
+        {
+          id: tomb.id,
+          pointA: "",
+          pointB: "",
+          labelA: null,
+          labelB: null,
+          distanceMm: 0,
+          note: "",
+          createdAt: tomb.deletedAt,
+          updatedAt: tomb.deletedAt,
+        },
+        projectId,
+      );
+      await tx.objectStore("measurements").put({ ...base, deletedAt: tomb.deletedAt, updatedAt: tomb.deletedAt });
     }
     await tx.done;
   }
@@ -522,7 +655,9 @@ export class IndexedDbRepository implements RilievoRepository {
 
   async uploadSummary(projectId: string) {
     const database = await db();
-    const photos = (await database.getAllFromIndex("photos", "by-project", projectId)).map(normalizePhoto);
+    const photos = (await database.getAllFromIndex("photos", "by-project", projectId))
+      .map(normalizePhoto)
+      .filter((photo) => !photo.deletedAt);
     const uploads = await database.getAllFromIndex("uploads", "by-project", projectId);
     const accepted = photos.filter((photo) => photo.accepted);
     const uploaded = accepted.filter((photo) => photo.uploadedAt != null).length;

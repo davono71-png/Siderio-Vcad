@@ -125,6 +125,80 @@ export async function ensureBrowserGetCors() {
   }
 }
 
+export async function readObjectRecord(key: string) {
+  const env = readEnv();
+  const client = clientFor(env);
+  try {
+    const object = await client.send(new GetObjectCommand({ Bucket: env.bucket, Key: key }));
+    const text = (await object.Body?.transformToString()) ?? "";
+    return { text, etag: object.ETag ?? "" };
+  } catch (error) {
+    const status = (error as { $metadata?: { httpStatusCode?: number }; name?: string }).$metadata?.httpStatusCode;
+    const name = (error as { name?: string }).name;
+    if (status === 404 || name === "NoSuchKey" || name === "NotFound") return null;
+    throw error;
+  } finally {
+    client.destroy();
+  }
+}
+
+/** Last-writer-wins unless ifMatch or ifNoneMatch is set. A failed precondition returns conflict. */
+export async function putObjectText(
+  key: string,
+  body: string,
+  precondition?: { ifMatch: string } | { ifNoneMatch: "*" },
+) {
+  const env = readEnv();
+  const client = clientFor(env);
+  try {
+    await client.send(
+      new PutObjectCommand({
+        Bucket: env.bucket,
+        Key: key,
+        Body: body,
+        ContentType: "application/json",
+        IfMatch: precondition && "ifMatch" in precondition ? precondition.ifMatch : undefined,
+        IfNoneMatch: precondition && "ifNoneMatch" in precondition ? precondition.ifNoneMatch : undefined,
+      }),
+    );
+    return "ok" as const;
+  } catch (error) {
+    const status = (error as { $metadata?: { httpStatusCode?: number }; name?: string }).$metadata?.httpStatusCode;
+    const name = (error as { name?: string }).name;
+    if (status === 412 || name === "PreconditionFailed") return "conflict" as const;
+    throw error;
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function listCommonPrefixes(prefix: string) {
+  const env = readEnv();
+  const client = clientFor(env);
+  const prefixes: string[] = [];
+  let token: string | undefined;
+  try {
+    do {
+      const listed = await client.send(
+        new ListObjectsV2Command({
+          Bucket: env.bucket,
+          Prefix: prefix,
+          Delimiter: "/",
+          ContinuationToken: token,
+          MaxKeys: 1000,
+        }),
+      );
+      for (const item of listed.CommonPrefixes ?? []) {
+        if (item.Prefix) prefixes.push(item.Prefix);
+      }
+      token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+    } while (token);
+    return prefixes;
+  } finally {
+    client.destroy();
+  }
+}
+
 export async function listObjects(prefix: string) {
   const env = readEnv();
   const client = clientFor(env);

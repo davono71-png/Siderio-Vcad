@@ -10,6 +10,7 @@ import { nextPointLabel } from "@/lib/format";
 import { orientedToRaw } from "@/lib/jpeg";
 import { fetchRemotePhoto } from "@/lib/upload/remote";
 import { scheduleManifest } from "@/lib/upload/runner";
+import { useCoarsePointer } from "@/lib/ui/media";
 import { Sheet } from "../ui/Sheet";
 import { LetterStrip } from "./LetterStrip";
 
@@ -18,14 +19,32 @@ type Draft = { x: number; y: number };
 
 const LOUPE = 2.7;
 
-export function Annotator({ projectId, photoId }: { projectId: string; photoId: string }) {
+export function Annotator({
+  projectId,
+  photoId,
+  embedded = false,
+  syncToken = 0,
+  onSaved,
+}: {
+  projectId: string;
+  photoId: string;
+  embedded?: boolean;
+  syncToken?: number;
+  onSaved?: () => void;
+}) {
   const router = useRouter();
   const stageRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View>({ scale: 1, x: 0, y: 0 });
   const fitRef = useRef(1);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const gesture = useRef<"none" | "aim" | "pan" | "pinch">("none");
+  const gesture = useRef<"none" | "aim" | "pan" | "pinch" | "drag">("none");
   const pinchRef = useRef({ dist: 1, scale: 1, x: 0, y: 0, cx: 0, cy: 0 });
+  const coarse = useCoarsePointer();
+  const coarseRef = useRef(false);
+  const spaceRef = useRef(false);
+  const dragRef = useRef<string | null>(null);
+  const originRef = useRef({ x: 0, y: 0 });
+  coarseRef.current = coarse;
 
   const [meta, setMeta] = useState<PhotoMeta | null>(null);
   const [url, setUrl] = useState<string | null>(null);
@@ -40,6 +59,10 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
   const [label, setLabel] = useState("A");
   const [linkId, setLinkId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const metaRef = useRef(meta);
+  const pointsRef = useRef(points);
+  metaRef.current = meta;
+  pointsRef.current = points;
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +106,59 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
   }, [photoId, projectId]);
 
   useEffect(() => {
+    let cancelled = false;
+    void getRepository()
+      .listPoints(projectId)
+      .then((stored) => {
+        if (!cancelled) setPoints(stored);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, syncToken]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+      if (event.code !== "Space") return;
+      spaceRef.current = true;
+      event.preventDefault();
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") spaceRef.current = false;
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = stage.getBoundingClientRect();
+      const current = viewRef.current;
+      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const nextScale = clamp(current.scale * factor, fitRef.current * 0.85, fitRef.current * 8);
+      const imageX = (event.clientX - rect.left - current.x) / current.scale;
+      const imageY = (event.clientY - rect.top - current.y) / current.scale;
+      commit({
+        scale: nextScale,
+        x: event.clientX - rect.left - imageX * nextScale,
+        y: event.clientY - rect.top - imageY * nextScale,
+      });
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, [url]);
+
+  useEffect(() => {
     if (!size.width || !size.height) return;
     const fit = () => applyFit(stageRef.current, size.width, size.height, fitRef, commit);
     fit();
@@ -123,9 +199,26 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
   }
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if ((event.target as HTMLElement).closest("[data-marker]")) return;
+    const marker = (event.target as HTMLElement).closest("[data-marker]");
+    if (marker instanceof HTMLElement && marker.dataset.point && event.button === 0) {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      dragRef.current = marker.dataset.point;
+      gesture.current = "drag";
+      setSelected(marker.dataset.point);
+      setLoupe(null);
+      return;
+    }
+    if (marker) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    originRef.current = { x: event.clientX, y: event.clientY };
+    if (event.button === 1 || spaceRef.current) {
+      gesture.current = "pan";
+      setLoupe(null);
+      return;
+    }
     if (pointers.current.size >= 2) {
       gesture.current = "pinch";
       const [a, b] = [...pointers.current.values()];
@@ -190,6 +283,32 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
       return;
     }
 
+    if (gesture.current === "drag" && dragRef.current && metaRef.current) {
+      const image = clientToImage(event.clientX, event.clientY);
+      if (!image) return;
+      const dragged = dragRef.current;
+      setPoints((current) =>
+        current.map((point) => {
+          if (point.id !== dragged) return point;
+          return {
+            ...point,
+            observations: point.observations.map((item) =>
+              item.photoId === photoId ? { ...item, x: image.x, y: image.y } : item,
+            ),
+          };
+        }),
+      );
+      return;
+    }
+
+    if (gesture.current === "aim" && !coarseRef.current) {
+      const moved = Math.hypot(event.clientX - originRef.current.x, event.clientY - originRef.current.y);
+      if (moved > 6) {
+        gesture.current = "pan";
+        setLoupe(null);
+      }
+    }
+
     if (gesture.current === "pan") {
       commit({
         ...viewRef.current,
@@ -203,6 +322,15 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
   }
 
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    if (gesture.current === "drag" && dragRef.current) {
+      const dragged = dragRef.current;
+      const image = clientToImage(event.clientX, event.clientY);
+      dragRef.current = null;
+      gesture.current = "none";
+      pointers.current.delete(event.pointerId);
+      if (image) void persistDrag(dragged, image.x, image.y);
+      return;
+    }
     const aiming = gesture.current === "aim";
     pointers.current.delete(event.pointerId);
     if (pointers.current.size < 2 && gesture.current === "pinch") gesture.current = "none";
@@ -224,6 +352,24 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
     const point = clientToImage(clientX, clientY);
     if (!point) return;
     setLoupe({ sx: clientX, sy: clientY, x: point.x, y: point.y });
+  }
+
+  async function persistDrag(pointId: string, x: number, y: number) {
+    const currentMeta = metaRef.current;
+    const point = pointsRef.current.find((item) => item.id === pointId);
+    if (!currentMeta || !point) return;
+    const raw = orientedToRaw(x, y, currentMeta.width, currentMeta.height, currentMeta.exifOrientation);
+    const next: NotablePoint = {
+      ...point,
+      observations: point.observations.map((item) =>
+        item.photoId === photoId ? { ...item, x, y, rawX: raw.x, rawY: raw.y } : item,
+      ),
+    };
+    pointsRef.current = pointsRef.current.map((item) => (item.id === pointId ? next : item));
+    setPoints(pointsRef.current);
+    await getRepository().upsertPoint(next);
+    scheduleManifest(projectId);
+    onSaved?.();
   }
 
   async function saveDraft() {
@@ -260,6 +406,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
       }
       await repo.upsertPoint(next);
       scheduleManifest(projectId);
+      onSaved?.();
       setPoints((current) => {
         const without = current.filter((point) => point.id !== next.id);
         return [...without, next].sort((a, b) => a.label.localeCompare(b.label, "it"));
@@ -282,6 +429,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
     };
     await getRepository().upsertPoint(next);
     scheduleManifest(projectId);
+    onSaved?.();
     setPoints((current) => current.map((item) => (item.id === pointId ? next : item)));
     setSelected(null);
   }
@@ -299,17 +447,27 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
   });
 
   return (
-    <div className="annotator">
+    <div className={embedded ? "annotator embedded" : "annotator"}>
       <header className="acquire-top">
-        <Link href={`/rilievo/${projectId}/quote`} className="icon-btn" aria-label="Torna alle quote">
-          ←
-        </Link>
+        {embedded ? (
+          <span className="icon-btn" aria-hidden>
+            ·
+          </span>
+        ) : (
+          <Link href={`/rilievo/${projectId}/quote`} className="icon-btn" aria-label="Torna alle quote">
+            ←
+          </Link>
+        )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">
             {meta ? `Foto ${String(meta.sequence).padStart(3, "0")}` : "Foto"}
           </p>
           <p className="text-xs text-white/70">
-            {mode === "punto" ? "Tieni premuto, aggiusta, rilascia" : "Trascina per spostare · due dita per lo zoom"}
+            {coarse
+              ? mode === "punto"
+                ? "Tieni premuto, aggiusta, rilascia"
+                : "Trascina per spostare · due dita per lo zoom"
+              : "Clicca per un punto · trascina il punto · rotella per lo zoom"}
           </p>
         </div>
         <button type="button" className="icon-btn" onClick={() => void removePhoto()}>
@@ -324,6 +482,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onAuxClick={(event) => event.preventDefault()}
         onContextMenu={(event) => event.preventDefault()}
       >
         {url && size.width > 0 ? (
@@ -341,6 +500,7 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
                 key={point.id}
                 type="button"
                 data-marker
+                data-point={point.id}
                 className={`marker ${selected === point.id ? "on" : ""}`}
                 style={{
                   left: observation.x,
@@ -406,11 +566,16 @@ export function Annotator({ projectId, photoId }: { projectId: string; photoId: 
             <p className="mt-3 text-sm font-semibold">
               Nome: {points.find((point) => point.id === linkId)?.label ?? label}
             </p>
-          ) : (
+          ) : coarse ? (
             <div className="mt-3">
               <p className="text-sm font-semibold">Nome</p>
               <LetterStrip value={label} onChange={setLabel} />
             </div>
+          ) : (
+            <label className="mt-3 block text-sm font-semibold">
+              Nome
+              <input id="point-label" className="input mt-1" value={label} onChange={(event) => setLabel(event.target.value)} />
+            </label>
           )}
           {points.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
