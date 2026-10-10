@@ -192,15 +192,24 @@ function asWarnings(value: unknown, flag: PhotoWarning | null): PhotoWarning[] {
   return value.filter((item): item is PhotoWarning => typeof item === "string" && allowed.has(item as PhotoWarning));
 }
 
+function legacyId(kind: string, raw: string) {
+  const slug = raw.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return slug ? `legacy-${kind}-${slug}` : "";
+}
+
 function asPhoto(value: unknown, fallback: string): SurveyPhoto | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Partial<SurveyPhoto>;
-  if (typeof record.id !== "string" || !record.id) return null;
+  const id =
+    typeof record.id === "string" && record.id
+      ? record.id
+      : legacyId("photo", typeof record.file === "string" ? record.file : typeof record.r2Key === "string" ? record.r2Key : "");
+  if (!id) return null;
   const flag =
     record.flag === "rotazione" || record.flag === "sovrapposizione" || record.flag === "texture" ? record.flag : null;
   const createdAt = asIso(record.createdAt, fallback);
   return {
-    id: record.id,
+    id,
     file: typeof record.file === "string" ? record.file : null,
     r2Key: typeof record.r2Key === "string" ? record.r2Key : null,
     sequence: typeof record.sequence === "number" && Number.isFinite(record.sequence) ? record.sequence : 0,
@@ -228,9 +237,13 @@ function asPhoto(value: unknown, fallback: string): SurveyPhoto | null {
 function asPoint(value: unknown, fallback: string): SurveyPoint | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Partial<SurveyPoint>;
-  if (typeof record.id !== "string" || !record.id) return null;
+  const id =
+    typeof record.id === "string" && record.id
+      ? record.id
+      : legacyId("point", typeof record.label === "string" ? record.label : "");
+  if (!id) return null;
   return {
-    id: record.id,
+    id,
     label: asString(record.label, "A").slice(0, 40),
     observations: asObservations(record.observations),
     updatedAt: asIso(record.updatedAt, fallback),
@@ -240,13 +253,17 @@ function asPoint(value: unknown, fallback: string): SurveyPoint | null {
 function asMeasurement(value: unknown, fallback: string): SurveyMeasurement | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Partial<SurveyMeasurement> & { labelA?: unknown; labelB?: unknown };
-  if (typeof record.id !== "string" || !record.id) return null;
   if (typeof record.pointA !== "string" || typeof record.pointB !== "string") return null;
+  const id =
+    typeof record.id === "string" && record.id
+      ? record.id
+      : legacyId("measure", `${record.pointA}-${record.pointB}-${Number(record.distanceMm)}`);
+  if (!id) return null;
   const distance = Number(record.distanceMm);
   if (!Number.isFinite(distance)) return null;
   const createdAt = asIso(record.createdAt, fallback);
   return {
-    id: record.id,
+    id,
     pointA: record.pointA,
     pointB: record.pointB,
     labelA: typeof record.labelA === "string" ? record.labelA : null,
@@ -279,8 +296,9 @@ function asTombstones(value: unknown) {
 
 export function parseSurveyDocument(value: unknown, expectedId?: string): SurveyDocument | null {
   if (!value || typeof value !== "object") return null;
-  const record = value as Partial<SurveyDocument> & { project?: Partial<SurveyProject> };
-  const project = record.project;
+  const record = value as Partial<SurveyDocument> & { id?: unknown; project?: Partial<SurveyProject> };
+  const nested = record.project && typeof record.project === "object" ? record.project : null;
+  const project = nested ?? (typeof record.id === "string" ? (record as Partial<SurveyProject>) : null);
   if (!project || typeof project.id !== "string" || !project.id) return null;
   if (expectedId && project.id !== expectedId) return null;
   const createdAt = asIso(project.createdAt, new Date(0).toISOString());

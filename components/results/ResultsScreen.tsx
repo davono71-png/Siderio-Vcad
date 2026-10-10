@@ -63,7 +63,7 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
   const [sendError, setSendError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const response = await fetch(`/api/rilievi/${projectId}/risultati`, { cache: "no-store" });
+    const response = await fetch(`/api/rilievi/${projectId}/risultati`, { cache: "no-store", signal: AbortSignal.timeout(12_000) });
     const body = (await response.json()) as ResultsPayload & { ok: boolean; code?: string };
     if (!response.ok || !body.ok) {
       if (body.code === "missing_env" || body.code === "bad_account") {

@@ -18,8 +18,14 @@ async function readJson(response: Response) {
   return (await response.json().catch(() => null)) as { ok?: boolean; code?: string; document?: unknown } | null;
 }
 
+const REQUEST_MS = 12_000;
+
+function timedSignal() {
+  return AbortSignal.timeout(REQUEST_MS);
+}
+
 async function fetchRemote(projectId: string): Promise<SurveyDocument | null> {
-  const response = await fetch(`/api/rilievi/${projectId}`, { cache: "no-store" });
+  const response = await fetch(`/api/rilievi/${projectId}`, { cache: "no-store", signal: timedSignal() });
   if (response.status === 404) return null;
   noteAccess(response);
   const body = await readJson(response);
@@ -35,6 +41,7 @@ async function putRemote(projectId: string, baseRevision: number, document: Surv
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ baseRevision, document }),
+    signal: timedSignal(),
   });
   noteAccess(response);
   const body = await readJson(response);
@@ -50,6 +57,19 @@ async function readLocal(projectId: string) {
 }
 
 async function doSync(projectId: string): Promise<SyncResult> {
+  try {
+    return await syncOnce(projectId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "unauthorized") return "unauthorized";
+    if (message === "forbidden") return "forbidden";
+    if (message === "unconfigured") return "unconfigured";
+    if (message === "offline" || (typeof navigator !== "undefined" && !navigator.onLine)) return "offline";
+    return "error";
+  }
+}
+
+async function syncOnce(projectId: string): Promise<SyncResult> {
   const repo = getRepository();
   let remote: SurveyDocument | null;
   try {
@@ -98,10 +118,7 @@ async function doSync(projectId: string): Promise<SyncResult> {
     }
     if (result.response.status === 409) {
       const server = parseSurveyDocument(result.body?.document, projectId);
-      if (!server) {
-        base = 0;
-        continue;
-      }
+      if (!server) return "error";
       pending = mergeDocuments(pending, server);
       await repo.importSurvey(pending);
       base = server.revision;

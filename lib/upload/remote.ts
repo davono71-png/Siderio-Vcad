@@ -23,6 +23,7 @@ async function presign(body: {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(12_000),
     });
   } catch {
     throw new PresignError("network", 0);
@@ -51,6 +52,7 @@ export async function putRemote(key: string, body: Blob, contentType: string) {
       method: "PUT",
       body,
       headers: { "Content-Type": contentType },
+      signal: AbortSignal.timeout(12_000),
     });
   } catch {
     throw new PresignError("network", 0);
@@ -61,7 +63,7 @@ export async function putRemote(key: string, body: Blob, contentType: string) {
 export async function fetchRemotePhoto(key: string) {
   try {
     const signed = await presign({ op: "get", key });
-    const response = await fetch(signed.url);
+    const response = await fetch(signed.url, { signal: AbortSignal.timeout(12_000) });
     if (!response.ok) return null;
     return await response.blob();
   } catch {

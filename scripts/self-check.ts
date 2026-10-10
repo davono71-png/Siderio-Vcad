@@ -268,6 +268,22 @@ const legacy = parseSurveyDocument({
   measurements: [{ id: "m9", pointA: "p9", pointB: "p9", distanceMm: 1000, createdAt: "2026-10-01T00:00:00.000Z" }],
 });
 assert(legacy?.revision === 0 && legacy.points[0]?.updatedAt === "2026-10-01T00:00:00.000Z", "un project.json vecchio riceve revisione 0 e la data del rilievo");
+const bare = parseSurveyDocument({
+  id: "8ad293ef-50fe-4329-a7dd-8e3eb0380b28",
+  name: "Ufficio",
+  kind: "facciata",
+  photos: [{ file: "foto/001.jpg", sequence: 1 }],
+  points: [{ label: "A", observations: [{ photoId: "f1", x: 2, y: 3, rawX: 2, rawY: 3 }] }],
+  measurements: [{ pointA: "legacy-point-A", pointB: "legacy-point-A", distanceMm: 1000 }],
+});
+assert(bare?.project.name === "Ufficio" && bare.revision === 0, "un file senza blocco project usa l'id in cima");
+if (!bare) throw new Error("file vecchio non letto");
+assert(bare.photos[0]?.id === "legacy-photo-foto-001.jpg", "una foto senza id resta");
+assert(bare.points[0]?.id === "legacy-point-A" && bare.points[0].updatedAt === new Date(0).toISOString(), "un punto senza id e senza data resta");
+assert(bare.measurements[0]?.id === "legacy-measure-legacy-point-A-legacy-point-A-1000", "una quota senza id resta");
+assert(bare.tombstones.points.length === 0 && bare.tombstones.photos.length === 0, "senza tombstone gli elenchi sono vuoti");
+const reread = parseSurveyDocument(bare);
+assert(reread?.points[0]?.id === bare.points[0]?.id && reread?.photos[0]?.id === bare.photos[0]?.id, "la lettura dello stesso file è idempotente");
 assert(legacy?.project.geometry === "pareti", "senza geometry si resta sulle pareti");
 const withGeometry = parseSurveyDocument({
   version: 2,

@@ -16,6 +16,15 @@ import { Sheet } from "../ui/Sheet";
 
 type Thumb = { photo: PhotoMeta; url: string };
 
+function syncNoteFor(result: Awaited<ReturnType<typeof syncSurvey>>) {
+  if (result === "ok" || result === "missing") return null;
+  if (result === "offline") return "Senza rete. Mostro i dati di questo telefono.";
+  if (result === "unauthorized") return "Sessione scaduta. I dati su questo telefono restano visibili.";
+  if (result === "forbidden") return "Accesso riservato. I dati su questo telefono restano visibili.";
+  if (result === "unconfigured") return "Archivio remoto non configurato. Mostro i dati di questo telefono.";
+  return "Archivio remoto non aggiornato. Mostro i dati di questo telefono.";
+}
+
 export function ProjectScreen({ projectId }: { projectId: string }) {
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
@@ -27,6 +36,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const [message, setMessage] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [tick, setTick] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
   const projectRef = useRef<Project | null>(null);
 
   useEffect(() => {
@@ -49,16 +60,9 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   useEffect(() => {
     let cancelled = false;
     const urls: string[] = [];
-    void (async () => {
-      const repo = getRepository();
-      await syncSurvey(projectId);
-      if (cancelled) return;
-      const stored = await repo.getProject(projectId);
-      if (cancelled) return;
-      if (!stored) {
-        setMissing(true);
-        return;
-      }
+    const repo = getRepository();
+
+    async function show(stored: Project) {
       const [photos, photoThumbs, storedPoints, storedMeasures] = await Promise.all([
         repo.listPhotos(projectId),
         repo.listThumbs(projectId),
@@ -68,23 +72,65 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       if (cancelled) return;
       const thumbById = new Map(photoThumbs.map((thumb) => [thumb.id, thumb.blob]));
       const next: Thumb[] = [];
+      const remote: PhotoMeta[] = [];
       for (const photo of photos.filter((item) => item.accepted)) {
         const blob = thumbById.get(photo.id);
-        let url: string | null = null;
-        if (blob) url = URL.createObjectURL(blob);
-        else if (photo.r2Key) {
-          const remote = await fetchRemotePhoto(photo.r2Key);
-          if (remote) url = URL.createObjectURL(remote);
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          urls.push(url);
+          next.push({ photo, url });
+        } else if (photo.r2Key) {
+          remote.push(photo);
         }
-        if (!url) continue;
-        urls.push(url);
-        next.push({ photo, url });
       }
+      setLoadError(null);
       setMissing(false);
       setProject(stored);
       setThumbs(next);
       setPoints(storedPoints.length);
       setMeasures(storedMeasures.length);
+      void fillRemote(remote);
+    }
+
+    async function fillRemote(remote: PhotoMeta[]) {
+      for (const photo of remote) {
+        if (cancelled || !photo.r2Key) continue;
+        const blob = await fetchRemotePhoto(photo.r2Key);
+        if (cancelled || !blob) continue;
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        setThumbs((current) => (current.some((item) => item.photo.id === photo.id) ? current : [...current, { photo, url }]));
+      }
+    }
+
+    void (async () => {
+      let stored: Project | null = null;
+      try {
+        stored = await repo.getProject(projectId);
+      } catch (reason) {
+        if (!cancelled) setLoadError(reason instanceof Error ? reason.message : "Archivio locale non disponibile.");
+        return;
+      }
+      if (cancelled) return;
+      if (stored) await show(stored);
+      if (cancelled) return;
+      setSyncNote(stored ? "Aggiorno l’archivio…" : null);
+      const result = await syncSurvey(projectId);
+      if (cancelled) return;
+      const again = await repo.getProject(projectId).catch(() => stored);
+      if (cancelled) return;
+      if (again) {
+        await show(again);
+        if (!cancelled) setSyncNote(syncNoteFor(result));
+        return;
+      }
+      if (!cancelled) {
+        setSyncNote(null);
+        if (result === "unauthorized") setLoadError("Accedi di nuovo per aprire questo rilievo.");
+        else if (result === "forbidden") setLoadError("Accesso riservato all'amministratore.");
+        else if (result === "missing") setMissing(true);
+        else setLoadError("Non riesco a leggere questo rilievo dall’archivio.");
+      }
     })();
     return () => {
       cancelled = true;
@@ -123,6 +169,20 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     await deleteRemoteSurvey(projectId);
     await getRepository().deleteProject(projectId);
     router.push("/");
+  }
+
+  if (loadError && !project) {
+    return (
+      <div className="page">
+        <p className="text-sm text-danger">{loadError}</p>
+        <button type="button" className="btn-secondary mt-4" onClick={() => setTick((value) => value + 1)}>
+          Riprova
+        </button>
+        <Link href="/" className="btn-primary mt-2 inline-flex">
+          Torna ai rilievi
+        </Link>
+      </div>
+    );
   }
 
   if (missing) {
@@ -170,6 +230,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
         {thumbs.length === 1 ? "1 foto" : `${thumbs.length} foto`} · {points} punti · {measures} quote · aggiornato{" "}
         {formatWhen(project.updatedAt)}
       </p>
+      {syncNote ? <p className="mt-2 text-sm text-steel">{syncNote}</p> : null}
+      {loadError ? <p className="mt-2 text-sm text-danger">{loadError}</p> : null}
 
       <UploadStatus projectId={projectId} />
 
