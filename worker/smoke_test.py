@@ -688,6 +688,16 @@ def check_imports_and_options():
     assert options.resolve_mode(options.parse_options({}), {"project": {"kind": "facciata"}}) == "facciata"
     assert options.resolve_mode(options.parse_options({"mode": "stanza"}), {"project": {"kind": "facciata"}}) == "stanza"
     assert options.resolve_mode(options.parse_options({}), {"version": 2}) == "stanza"
+    assert options.parse_options({}).geometry == "pareti"
+    assert options.resolve_geometry(options.parse_options({}), {}) == "pareti"
+    assert options.resolve_geometry(options.parse_options({}), {"project": {"geometry": "completa"}}) == "completa"
+    assert options.resolve_geometry(options.parse_options({"geometry": "pareti"}), {"project": {"geometry": "completa"}}) == "pareti"
+    try:
+        options.parse_options({"geometry": "tutto"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("geometry sconosciuta accettata")
     try:
         options.parse_options({"mode": "box"})
     except ValueError:
@@ -921,6 +931,66 @@ def check_step():
         assert abs(info["lengthMm"] - 4000) < 1
 
 
+def check_complete_geometry():
+    """An L-shaped table is not a bounding rectangle, and an incline is kept."""
+    try:
+        from siderio_worker import complete
+    except ImportError:
+        print("completa senza il pacchetto")
+        return
+    rng = np.random.default_rng(1)
+    wall = _grid_plane(np.array([0.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), 0, 1800, 0, 1400, 25)
+    # L on the horizontal plane y = 900: long arm plus a return, so the bbox is larger than the footprint.
+    arm = _grid_plane(np.array([200.0, 900.0, 200.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0]), 0, 1400, 0, 400, 25)
+    ret = _grid_plane(np.array([200.0, 900.0, 200.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0]), 0, 400, 0, 1100, 25)
+    incline_u = np.array([1.0, 0.0, 0.0])
+    incline_v = np.array([0.0, 0.6, 0.8])
+    incline_v = incline_v / np.linalg.norm(incline_v)
+    slope = _grid_plane(np.array([2200.0, 400.0, 400.0]), incline_u, incline_v, 0, 700, 0, 500, 25)
+    blob = rng.normal(size=(180, 3)) * np.array([40.0, 30.0, 35.0]) + np.array([900.0, 1100.0, 700.0])
+    points = np.vstack([wall, arm, ret, slope, blob])
+    normals = []
+    for block, normal in (
+        (wall, [0.0, 0.0, 1.0]),
+        (arm, [0.0, 1.0, 0.0]),
+        (ret, [0.0, 1.0, 0.0]),
+        (slope, np.cross(incline_u, incline_v)),
+    ):
+        normals.append(np.repeat(np.asarray(normal, float)[None, :], len(block), axis=0))
+    normals.append(rng.normal(size=blob.shape))
+    normals = np.vstack(normals)
+    surfaces, residual = complete.segment_surfaces(points, normals, np.array([0.0, 1.0, 0.0]))
+    roles = {item["role"] for item in surfaces}
+    assert "parete" in roles, roles
+    assert "inclinata" in roles, roles
+    assert "orizzontale" in roles or "pavimento" in roles, roles
+    table = next(item for item in surfaces if item["role"] in ("orizzontale", "pavimento") and item["area"] < 1_200_000)
+    box = float(table["width"] * table["height"])
+    assert table["area"] < box * 0.8, (table["area"], box, table["role"])
+    assert int(residual.sum()) > 20
+    print(f"completa {len(surfaces)} superfici, ruoli {sorted(roles)}, residui {int(residual.sum())}")
+    try:
+        import cadquery  # noqa: F401
+    except ImportError:
+        print("completa senza cadquery")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        report = complete.export_complete(points, normals, np.array([0.0, 1.0, 0.0]), "facciata", tmp)
+    assert report["surfaceCount"] >= 3, report["surfaceCount"]
+    assert report["files"]["completo.step"] > 500
+    assert report["files"]["completo.glb"] > 200
+    assert report["files"]["oggetti.stl"] > 80, report["files"]
+    assert report["files"]["oggetti.obj"] > 80, report["files"]
+    print(f"completa file {report['files']} step mesh {report['residual'].get('step')}")
+
+
+def _grid_plane(origin, axis_u, axis_v, u0, u1, v0, v1, step):
+    us = np.arange(u0, u1 + 1, step)
+    vs = np.arange(v0, v1 + 1, step)
+    uu, vv = np.meshgrid(us, vs)
+    return origin + uu.reshape(-1, 1) * axis_u + vv.reshape(-1, 1) * axis_v
+
+
 def main():
     check_imports_and_options()
     check_scale()
@@ -931,6 +1001,7 @@ def main():
     check_corner_join()
     check_v6_corner_export()
     check_step()
+    check_complete_geometry()
     print("smoke ok")
 
 

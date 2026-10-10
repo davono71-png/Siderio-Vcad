@@ -2,17 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getRepository } from "@/lib/data";
-import type { ProjectKind } from "@/lib/data/types";
+import type { ProjectGeometry, ProjectKind } from "@/lib/data/types";
+import { syncSurvey } from "@/lib/sync/client";
 import { formatMm, kindLabel } from "@/lib/format";
 import type { ResultName } from "@/lib/results/files";
 import type { ResultsPayload } from "@/lib/results/types";
 import { resultFacts, type SceneDoc } from "@/lib/results/scene";
+import { GeometryToggle } from "../project/GeometryToggle";
 import { PageHeader } from "../ui/PageHeader";
 import { PhotoViewer } from "./PhotoViewer";
 import { StepViewer } from "./StepViewer";
 
 const DOWNLOADS: { name: ResultName; label: string; primary?: boolean }[] = [
   { name: "walls.step", label: "STEP pareti per Solid Edge", primary: true },
+  { name: "completo.step", label: "STEP geometria completa" },
+  { name: "oggetti.stl", label: "STL oggetti" },
+  { name: "oggetti.obj", label: "OBJ oggetti" },
   { name: "extra.step", label: "STEP altre superfici" },
   { name: "room_textured.glb", label: "Modello GLB" },
   { name: "room_textured_obj.zip", label: "OBJ con texture" },
@@ -25,7 +30,7 @@ const GALLERY: { name: ResultName; label: string }[] = [
   { name: "preview_plan.png", label: "Pianta" },
 ];
 
-type View = "foto" | "step";
+type View = "foto" | "step" | "completo";
 
 function stageTitle(payload: ResultsPayload, jobStatus: string | null) {
   if (jobStatus === "IN_QUEUE") return { title: "In coda", detail: "Il rilievo è in attesa del motore." };
@@ -51,6 +56,7 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
   const [backHref, setBackHref] = useState("/");
   const [view, setView] = useState<View>("foto");
   const [mode, setMode] = useState<ProjectKind>("facciata");
+  const [geometry, setGeometry] = useState<ProjectGeometry>("pareti");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -78,6 +84,7 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
         if (cancelled || !project) return;
         setBackHref(`/rilievo/${projectId}`);
         setMode(project.kind);
+        setGeometry(project.geometry === "completa" ? "completa" : "pareti");
       })
       .catch(() => undefined);
     const stored = window.sessionStorage.getItem(`siderio-job-${projectId}`);
@@ -119,7 +126,7 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
       const response = await fetch(`/api/rilievi/${projectId}/motore`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, geometry }),
       });
       const body = (await response.json()) as { ok?: boolean; jobId?: string; status?: string; code?: string };
       if (!response.ok || !body.ok || !body.jobId) {
@@ -140,6 +147,7 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
   const stage = payload ? stageTitle(payload, jobStatus) : null;
   const present = new Set(payload?.files.map((file) => file.name) ?? []);
   const glb = payload?.files.find((file) => file.name === "room_textured.glb")?.viewUrl ?? null;
+  const completo = payload?.files.find((file) => file.name === "completo.glb")?.viewUrl ?? null;
   const poster = payload?.files.find((file) => file.name === "preview_iso.png")?.viewUrl ?? null;
   const showJob = Boolean(jobId && jobStatus && jobStatus !== "COMPLETED");
 
@@ -218,6 +226,9 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
             <button type="button" className={`chip ${view === "step" ? "chip-on" : ""}`} onClick={() => setView("step")}>
               Pareti STEP
             </button>
+            <button type="button" className={`chip ${view === "completo" ? "chip-on" : ""}`} onClick={() => setView("completo")}>
+              Completo
+            </button>
           </div>
 
           <div className="mt-3">
@@ -227,6 +238,14 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
               ) : (
                 <div className="viewer-stage">
                   <p className="viewer-error">Il modello fotografico non c’è ancora.</p>
+                </div>
+              )
+            ) : view === "completo" ? (
+              completo ? (
+                <PhotoViewer src={completo} poster={poster} />
+              ) : (
+                <div className="viewer-stage">
+                  <p className="viewer-error">Il modello completo non c’è in questo risultato.</p>
                 </div>
               )
             ) : payload.scene ? (
@@ -278,6 +297,19 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
                 {kindLabel(kind)}
               </button>
             ))}
+          </div>
+          <div className="mt-3">
+            <GeometryToggle
+              checked={geometry === "completa"}
+              onChange={(next) => {
+                const value: ProjectGeometry = next ? "completa" : "pareti";
+                setGeometry(value);
+                void getRepository()
+                  .updateProject(projectId, { geometry: value })
+                  .then(() => syncSurvey(projectId))
+                  .catch(() => undefined);
+              }}
+            />
           </div>
           <button type="button" className="btn-primary mt-3 w-full" disabled={!payload.engineReady || sending} onClick={() => void send()}>
             {sending ? "Invio…" : "Invia al motore"}

@@ -2,6 +2,9 @@
 
 export type ProjectKind = "stanza" | "facciata";
 
+/** pareti is today's walls. completa also exports every surface and the leftover objects. */
+export type ProjectGeometry = "pareti" | "completa";
+
 export type JobStatus =
   | "non_inviato"
   | "in_coda"
@@ -21,6 +24,8 @@ export type Project = {
   id: string;
   name: string;
   kind: ProjectKind;
+  /** Missing on older rilievi. Treated as pareti. */
+  geometry?: ProjectGeometry;
   notes: string;
   createdAt: string;
   updatedAt: string;
@@ -144,7 +149,7 @@ export type NewProjectInput = {
   notes: string;
 };
 
-export type ProjectPatch = Partial<Pick<Project, "name" | "kind" | "notes" | "job" | "scaleChecklist">>;
+export type ProjectPatch = Partial<Pick<Project, "name" | "kind" | "geometry" | "notes" | "job" | "scaleChecklist">>;
 
 export type NewPhotoInput = {
   projectId: string;

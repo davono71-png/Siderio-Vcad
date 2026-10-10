@@ -8,6 +8,7 @@ import type {
   PhotoQuality,
   PhotoWarning,
   Project,
+  ProjectGeometry,
   ProjectJob,
   ProjectKind,
   RejectReason,
@@ -74,6 +75,7 @@ export type SurveyProject = {
   id: string;
   name: string;
   kind: ProjectKind;
+  geometry: ProjectGeometry;
   notes: string;
   createdAt: string;
   updatedAt: string;
@@ -140,6 +142,10 @@ function asIso(value: unknown, fallback: string) {
 
 function asKind(value: unknown): ProjectKind {
   return value === "stanza" || value === "facciata" ? value : "facciata";
+}
+
+function asGeometry(value: unknown): ProjectGeometry {
+  return value === "completa" ? "completa" : "pareti";
 }
 
 function asChecklist(value: unknown): ScaleChecklist {
@@ -301,6 +307,7 @@ export function parseSurveyDocument(value: unknown, expectedId?: string): Survey
       id: project.id,
       name: asString(project.name, "Senza nome").slice(0, 200) || "Senza nome",
       kind: asKind(project.kind),
+      geometry: asGeometry(project.geometry),
       notes: asString(project.notes).slice(0, 4000),
       createdAt,
       updatedAt,
@@ -340,6 +347,7 @@ export function documentFromParts(input: {
       id: input.project.id,
       name: input.project.name,
       kind: input.project.kind,
+      geometry: input.project.geometry === "completa" ? "completa" : "pareti",
       notes: input.project.notes,
       createdAt: input.project.createdAt,
       updatedAt: input.project.updatedAt,

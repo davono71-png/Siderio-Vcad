@@ -122,6 +122,8 @@ CONTENT_TYPES = {
     ".json": "application/json",
     ".md": "text/markdown; charset=utf-8",
     ".png": "image/png",
+    ".stl": "model/stl",
+    ".obj": "model/obj",
     ".jpg": "image/jpeg",
     ".txt": "text/plain; charset=utf-8",
 }
