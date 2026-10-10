@@ -50,6 +50,13 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="it" className={`${dmSans.variable} ${sourceSerif.variable} h-full antialiased`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var KEY="siderio-chunk-reload";function once(){if(sessionStorage.getItem(KEY)==="1")return;sessionStorage.setItem(KEY,"1");location.reload();}function broken(message){return /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed/i.test(String(message||""));}addEventListener("error",function(event){var target=event.target;if(target&&target.src&&String(target.src).indexOf("/_next/")!==-1){once();return;}if(broken(event.message))once();},true);addEventListener("unhandledrejection",function(event){var reason=event.reason;if(broken(reason&&(reason.message||String(reason))))once();});}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-full bg-paper text-ink">
         <RegisterSW />
         <AccessGate>

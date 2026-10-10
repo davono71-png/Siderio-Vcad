@@ -26,6 +26,13 @@ export function RegisterSW() {
     const run = async () => {
       const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
       await registration.update();
+      window.setTimeout(() => {
+        try {
+          window.sessionStorage.removeItem("siderio-chunk-reload");
+        } catch {
+          /* private mode */
+        }
+      }, 8000);
     };
     run().catch(() => {
       /* offline install is best-effort */

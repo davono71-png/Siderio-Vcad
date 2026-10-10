@@ -1,7 +1,5 @@
-const CACHE = "siderio-vcad-v6";
+const CACHE = "siderio-vcad-v7";
 const PRECACHE = [
-  "/",
-  "/manifest.webmanifest",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/icon-maskable-512.png",
@@ -38,36 +36,62 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return;
 
-  const navigate = req.mode === "navigate";
-  const immutable = url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/brand/");
+  event.respondWith(handle(req, url));
+});
 
-  event.respondWith(
-    (async () => {
-      if (navigate) {
+async function handle(req, url) {
+  if (req.mode === "navigate" || req.destination === "document") {
+    const fresh = await freshDocument(req);
+    return fresh ?? offlineDocument();
+  }
+  if (url.pathname === "/sw.js" || url.pathname === "/manifest.webmanifest") {
+    return fetch(req);
+  }
+  if (isStatic(url)) {
+    const cache = await caches.open(CACHE);
+    const hit = await cache.match(req);
+    if (hit) return hit;
+    try {
+      const fresh = await fetch(req);
+      if (fresh.ok) {
         try {
-          const fresh = await fetch(req, { cache: "no-store" });
-          if (fresh.ok) {
-            const cache = await caches.open(CACHE);
-            await cache.put(req, fresh.clone());
-          }
-          return fresh;
+          await cache.put(req, fresh.clone());
         } catch {
-          return (await caches.match(req)) ?? (await caches.match("/")) ?? Response.error();
+          /* A full disk must not hide the response. */
         }
       }
+      return fresh;
+    } catch {
+      return (await cache.match(req)) ?? Response.error();
+    }
+  }
+  try {
+    return await fetch(req);
+  } catch {
+    return Response.error();
+  }
+}
 
-      const cache = await caches.open(CACHE);
-      if (immutable) {
-        const hit = await cache.match(req);
-        if (hit) return hit;
-      }
-      try {
-        const fresh = await fetch(req);
-        if (fresh.ok) await cache.put(req, fresh.clone());
-        return fresh;
-      } catch {
-        return (await cache.match(req)) ?? Response.error();
-      }
-    })(),
-  );
-});
+async function freshDocument(req) {
+  try {
+    return await fetch(req, { cache: "no-store" });
+  } catch {
+    try {
+      return await fetch(req);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function isStatic(url) {
+  return url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/brand/");
+}
+
+function offlineDocument() {
+  const html = `<!doctype html><html lang="it"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Siderio</title><body style="font-family:sans-serif;padding:24px"><h1>Siderio</h1><p>Serve la rete per aprire l’app. Riapri quando la connessione c’è.</p></body></html>`;
+  return new Response(html, {
+    status: 503,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}

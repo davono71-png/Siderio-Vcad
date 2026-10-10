@@ -200,7 +200,11 @@ function openDatabase() {
 }
 
 function bySequence(a: PhotoMeta, b: PhotoMeta) {
-  return a.sequence - b.sequence || a.createdAt.localeCompare(b.createdAt);
+  return (Number(a.sequence) || 0) - (Number(b.sequence) || 0) || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
 }
 
 function asChecklist(value: ScaleChecklist | undefined): ScaleChecklist {
@@ -216,44 +220,77 @@ function asWarnings(photo: PhotoMeta): PhotoWarning[] {
   return photo.flag ? [photo.flag] : [];
 }
 
-function normalizeProject(project: Project): Project {
-  return {
-    ...project,
-    revision: typeof project.revision === "number" && Number.isFinite(project.revision) ? project.revision : 0,
-    scaleChecklist: asChecklist(project.scaleChecklist),
-    geometry: project.geometry === "completa" ? "completa" : "pareti",
-  };
+function normalizeProject(project: Project): Project | null {
+  if (!isRecord(project) || typeof project.id !== "string" || !project.id) return null;
+  try {
+    const createdAt = typeof project.createdAt === "string" ? project.createdAt : new Date(0).toISOString();
+    const updatedAt = typeof project.updatedAt === "string" ? project.updatedAt : createdAt;
+    return {
+      ...project,
+      name: typeof project.name === "string" && project.name.trim() ? project.name : "Senza nome",
+      kind: project.kind === "stanza" || project.kind === "facciata" ? project.kind : "facciata",
+      notes: typeof project.notes === "string" ? project.notes : "",
+      createdAt,
+      updatedAt,
+      revision: typeof project.revision === "number" && Number.isFinite(project.revision) ? project.revision : 0,
+      job: isRecord(project.job) ? project.job : freshJob(),
+      scaleChecklist: asChecklist(project.scaleChecklist),
+      geometry: project.geometry === "completa" ? "completa" : "pareti",
+    };
+  } catch {
+    return null;
+  }
 }
 
-function normalizePhoto(photo: PhotoMeta): PhotoMeta {
-  const warnings = asWarnings(photo);
-  const motion = photo.motion
-    ? { ...photo.motion, gyroDegPerSec: photo.motion.gyroDegPerSec ?? null }
-    : null;
-  const quality = photo.quality
-    ? {
-        ...photo.quality,
-        cornersPerK: photo.quality.cornersPerK ?? 0,
-        gradient: photo.quality.gradient ?? 0,
-      }
-    : null;
-  return {
-    ...photo,
-    warnings,
-    flag: photo.flag ?? warnings[0] ?? null,
-    r2Key: photo.r2Key ?? null,
-    uploadedAt: photo.uploadedAt ?? null,
-    localBlob: photo.localBlob !== false,
-    motion,
-    quality,
-  };
+function normalizePhoto(photo: PhotoMeta): PhotoMeta | null {
+  if (!isRecord(photo) || typeof photo.id !== "string" || typeof photo.projectId !== "string") return null;
+  try {
+    const warnings = asWarnings(photo);
+    const motion = photo.motion
+      ? { ...photo.motion, gyroDegPerSec: photo.motion.gyroDegPerSec ?? null }
+      : null;
+    const quality = photo.quality
+      ? {
+          ...photo.quality,
+          cornersPerK: photo.quality.cornersPerK ?? 0,
+          gradient: photo.quality.gradient ?? 0,
+        }
+      : null;
+    return {
+      ...photo,
+      createdAt: typeof photo.createdAt === "string" ? photo.createdAt : new Date(0).toISOString(),
+      sequence: Number(photo.sequence) || 0,
+      warnings,
+      flag: photo.flag ?? warnings[0] ?? null,
+      r2Key: photo.r2Key ?? null,
+      uploadedAt: photo.uploadedAt ?? null,
+      localBlob: photo.localBlob !== false,
+      motion,
+      quality,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function keep<T>(items: T[], normalize: (item: T) => T | null): T[] {
+  const out: T[] = [];
+  for (const item of items) {
+    try {
+      const next = normalize(item);
+      if (next) out.push(next);
+    } catch {
+      /* A damaged record stays in the database and stays out of the list. */
+    }
+  }
+  return out;
 }
 
 export class IndexedDbRepository implements RilievoRepository {
   async listProjects() {
     const database = await db();
     const all = await database.getAll("projects");
-    return all.map(normalizeProject).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return keep(all, normalizeProject).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async getProject(id: string) {
@@ -293,7 +330,7 @@ export class IndexedDbRepository implements RilievoRepository {
       updatedAt: new Date().toISOString(),
     };
     await database.put("projects", next);
-    return normalizeProject(next);
+    return normalizeProject(next) ?? next;
   }
 
   async deleteProject(id: string) {
@@ -326,15 +363,16 @@ export class IndexedDbRepository implements RilievoRepository {
   async listAllPhotos(projectId: string) {
     const database = await db();
     const photos = await database.getAllFromIndex("photos", "by-project", projectId);
-    return photos.map(normalizePhoto).sort(bySequence);
+    return keep(photos, normalizePhoto).sort(bySequence);
   }
 
   async getPhoto(id: string) {
     const database = await db();
     const stored = await database.get("photos", id);
-    if (!stored) return null;
+    const meta = stored ? normalizePhoto(stored) : null;
+    if (!meta) return null;
     const row = await database.get("photoBlobs", id);
-    return { meta: normalizePhoto(stored), blob: row?.blob ?? null };
+    return { meta, blob: row?.blob ?? null };
   }
 
   async listThumbs(projectId: string) {
@@ -416,7 +454,9 @@ export class IndexedDbRepository implements RilievoRepository {
   async listAllPoints(projectId: string) {
     const database = await db();
     const points = await database.getAllFromIndex("points", "by-project", projectId);
-    return points.sort((a, b) => a.label.localeCompare(b.label, "it"));
+    return points
+      .filter((point) => isRecord(point) && typeof point.id === "string" && typeof point.label === "string")
+      .sort((a, b) => a.label.localeCompare(b.label, "it"));
   }
 
   async upsertPoint(point: NotablePoint) {
@@ -462,7 +502,9 @@ export class IndexedDbRepository implements RilievoRepository {
   async listAllMeasurements(projectId: string) {
     const database = await db();
     const measurements = await database.getAllFromIndex("measurements", "by-project", projectId);
-    return measurements.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return measurements
+      .filter((item) => isRecord(item) && typeof item.id === "string" && typeof item.createdAt === "string")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   async upsertMeasurement(measurement: Measurement) {
@@ -658,9 +700,9 @@ export class IndexedDbRepository implements RilievoRepository {
 
   async uploadSummary(projectId: string) {
     const database = await db();
-    const photos = (await database.getAllFromIndex("photos", "by-project", projectId))
-      .map(normalizePhoto)
-      .filter((photo) => !photo.deletedAt);
+    const photos = keep(await database.getAllFromIndex("photos", "by-project", projectId), normalizePhoto).filter(
+      (photo) => !photo.deletedAt,
+    );
     const uploads = await database.getAllFromIndex("uploads", "by-project", projectId);
     const accepted = photos.filter((photo) => photo.accepted);
     const uploaded = accepted.filter((photo) => photo.uploadedAt != null).length;
@@ -757,7 +799,7 @@ export class IndexedDbRepository implements RilievoRepository {
         const photo = await database.get("photos", id);
         if (photo) {
           const meta = normalizePhoto(photo);
-          await database.put("photos", {
+          if (meta) await database.put("photos", {
             ...meta,
             r2Key: current.key,
             uploadedAt: now,
@@ -814,7 +856,7 @@ export class IndexedDbRepository implements RilievoRepository {
     let freed = 0;
     for (const photo of photos) {
       const meta = normalizePhoto(photo);
-      if (!meta.accepted || !meta.uploadedAt || !meta.localBlob) continue;
+      if (!meta || !meta.accepted || !meta.uploadedAt || !meta.localBlob) continue;
       await tx.objectStore("photoBlobs").delete(meta.id);
       await tx.objectStore("photos").put({ ...meta, localBlob: false });
       freed += 1;

@@ -6,7 +6,19 @@ import { authorizeUser, isSecureRequest, nextCookieOptions } from "@/lib/auth/ch
 
 type PendingCookie = { name: string; value: string; options: CookieOptions };
 
+function isAsset(pathname: string) {
+  return (
+    pathname.startsWith("/_next/") ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/brand/") ||
+    pathname === "/sw.js" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/favicon.ico"
+  );
+}
+
 export async function proxy(request: NextRequest) {
+  if (isAsset(request.nextUrl.pathname)) return NextResponse.next();
   const config = supabasePublicConfig();
   if (!config) {
     return NextResponse.json(
