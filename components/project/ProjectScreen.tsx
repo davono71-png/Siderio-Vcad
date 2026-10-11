@@ -10,6 +10,9 @@ import { formatWhen, kindLabel } from "@/lib/format";
 import { scheduleManifest } from "@/lib/upload/runner";
 import { deleteRemoteSurvey, syncSurvey } from "@/lib/sync/client";
 import { fetchRemotePhoto } from "@/lib/upload/remote";
+import { AppVersion } from "../pwa/AppVersion";
+import { usePullToRefresh } from "../pwa/PullToRefresh";
+import { checkForAppUpdate } from "../pwa/update";
 import { UploadStatus } from "../upload/UploadStatus";
 import { PageHeader } from "../ui/PageHeader";
 import { Sheet } from "../ui/Sheet";
@@ -38,6 +41,10 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
   const [tick, setTick] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [syncNote, setSyncNote] = useState<string | null>(null);
+  const refreshing = usePullToRefresh(() => {
+    void checkForAppUpdate();
+    setTick((value) => value + 1);
+  });
   const projectRef = useRef<Project | null>(null);
 
   useEffect(() => {
@@ -230,6 +237,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
         {thumbs.length === 1 ? "1 foto" : `${thumbs.length} foto`} · {points} punti · {measures} quote · aggiornato{" "}
         {formatWhen(project.updatedAt)}
       </p>
+      {refreshing ? <p className="mt-2 text-sm text-steel">Aggiorno…</p> : null}
       {syncNote ? <p className="mt-2 text-sm text-steel">{syncNote}</p> : null}
       {loadError ? <p className="mt-2 text-sm text-danger">{loadError}</p> : null}
 
@@ -291,6 +299,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
       <button type="button" className="btn-danger mt-6 w-full" onClick={() => setConfirmDelete(true)}>
         Elimina rilievo
       </button>
+
+      <AppVersion />
 
       {confirmDelete ? (
         <Sheet title="Eliminare il rilievo?" onClose={() => setConfirmDelete(false)}>

@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Logo } from "@/components/brand/Logo";
 import { RESERVED_MESSAGE } from "@/lib/auth/admin";
+import { AppVersion } from "@/components/pwa/AppVersion";
 
 type Gate = "loading" | "ok" | "unconfigured" | "login";
 
@@ -81,6 +82,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
     return (
       <div className="page">
         <p className="text-sm text-steel">Caricamento…</p>
+        <AppVersion />
       </div>
     );
   }
@@ -93,6 +95,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
         <h1 className="font-serif text-4xl tracking-tight">Accesso</h1>
         <p className="mt-4 text-sm leading-relaxed">Il collegamento a Siderio Suite non è configurato.</p>
         <p className="mt-2 text-sm text-steel">Senza l’indirizzo e la chiave pubblica i rilievi restano chiusi.</p>
+        <AppVersion />
       </div>
     );
   }
@@ -135,6 +138,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
           {busy ? "Verifica…" : "Entra"}
         </button>
       </form>
+      <AppVersion />
     </div>
   );
 }

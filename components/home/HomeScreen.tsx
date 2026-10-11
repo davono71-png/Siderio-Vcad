@@ -7,6 +7,9 @@ import { getRepository } from "@/lib/data";
 import type { ProjectKind } from "@/lib/data/types";
 import { formatWhen, kindLabel } from "@/lib/format";
 import { fetchRemoteSurveys, syncSurvey, type RemoteCard } from "@/lib/sync/client";
+import { AppVersion } from "../pwa/AppVersion";
+import { usePullToRefresh } from "../pwa/PullToRefresh";
+import { checkForAppUpdate } from "../pwa/update";
 import { Toast } from "../ui/Toast";
 
 type Card = {
@@ -43,6 +46,11 @@ function mergeCards(local: Card[], remote: RemoteCard[]) {
 export function HomeScreen() {
   const [projects, setProjects] = useState<Card[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const refreshing = usePullToRefresh(() => {
+    void checkForAppUpdate();
+    setReloadKey((value) => value + 1);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -107,7 +115,7 @@ export function HomeScreen() {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, []);
+  }, [reloadKey]);
 
   return (
     <div className="page">
@@ -119,6 +127,7 @@ export function HomeScreen() {
         Fotografa una stanza o una facciata. L’archivio tiene punti e quote, così lo stesso rilievo si apre anche dal computer.
       </p>
 
+      {refreshing ? <p className="mt-3 text-sm text-steel">Aggiorno…</p> : null}
       {error ? <Toast message={error} /> : null}
       {projects == null && !error ? <p className="mt-8 text-sm text-steel">Caricamento…</p> : null}
 
@@ -151,6 +160,8 @@ export function HomeScreen() {
           </li>
         ))}
       </ul>
+
+      <AppVersion dock />
 
       <div className="home-dock">
         <Link href="/nuovo" className="btn-primary flex w-full items-center justify-center bg-accent text-ink">

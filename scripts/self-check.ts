@@ -9,6 +9,7 @@ import { wallSolids } from "../lib/results/scene";
 import { parseSurveyDocument, type SurveyDocument } from "../lib/sync/document";
 import { mergeDocuments } from "../lib/sync/merge";
 import { commitSurvey, readSurvey } from "../lib/sync/store";
+import { serviceWorkerScript } from "../lib/pwa/worker-script";
 import { checkPresign, photoObjectKey } from "../lib/storage/keys";
 import { orientedSize, orientedToRaw, readJpegInfo } from "../lib/jpeg";
 import type { Measurement } from "../lib/data/types";
@@ -16,6 +17,15 @@ import type { Measurement } from "../lib/data/types";
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
 }
+
+const worker = serviceWorkerScript("abc1234");
+assert(worker.includes('const CACHE = "siderio-vcad-abc1234"'), "la cache segue la build");
+assert(worker.includes("SKIP_WAITING"), "il worker accetta skipWaiting");
+assert(worker.includes("skipWaiting()"), "l’installazione attiva subito il worker");
+assert(worker.includes('cache: "no-store"'), "la navigazione parte dalla rete");
+const precache = worker.slice(worker.indexOf("const PRECACHE"), worker.indexOf("];"));
+assert(!precache.includes('"/"'), "il precache non include l’HTML");
+assert(worker.includes("caches.match(key)"), "l’HTML in cache si usa solo se la rete manca");
 
 const sharp = new Uint8Array(32 * 32);
 for (let i = 0; i < sharp.length; i += 1) sharp[i] = (i % 32) % 2 === 0 ? 0 : 255;
