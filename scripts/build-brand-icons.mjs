@@ -33,14 +33,10 @@ mkdirSync("public/brand", { recursive: true });
 
 writeFileSync("public/brand/siderio-icon.svg", iconSvg(512, { rounded: true }));
 
-const jobs = [
-  ["public/icons/icon-192.png", iconSvg(192, { rounded: true })],
-  ["public/icons/icon-512.png", iconSvg(512, { rounded: true })],
-  ["public/icons/icon-maskable-512.png", iconSvg(512, { maskable: true })],
-  ["public/icons/apple-touch-icon.png", iconSvg(180, { rounded: false })],
-  ["public/apple-touch-icon.png", iconSvg(180, { rounded: false })],
-  ["public/icons/icon-source.png", iconSvg(1024, { rounded: true })],
-];
+// Le icone dell'app (manifest, iPhone, favicon) non nascono più da qui: dal
+// 20 ottobre 2026 le disegna strumenti/icone.mjs, con le due lettere Sv come
+// le altre app Siderio. Qui resta solo il marchio usato dentro l'interfaccia.
+const jobs = [];
 
 for (const [file, svg] of jobs) {
   await sharp(Buffer.from(svg)).png({ compressionLevel: 9 }).toFile(file);
