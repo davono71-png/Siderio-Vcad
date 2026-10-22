@@ -202,9 +202,11 @@ def to_millimetres(scene: dict, mm_per_unit: float | None = None) -> dict:
 def reconstruct_mm(points, normals, wall_thickness_mm=150.0) -> dict:
     """Y-up cloud in millimetres. The main ground is Y=0. X/Z start at the occupied minimum.
 
-    One dominant ground, at most one extra terrace, roofs that are real slabs
-    (nothing continues above them), thin caps as walls, thick footprints as
-    buildings. Vertical faces are accepted only when they are filled sheets.
+    One dominant ground, roofs that are real slabs (nothing continues above
+    them), thin caps as walls, thick footprints as buildings. Terrain is the
+    footprint of those objects plus about a metre, and a terrace that does not
+    touch that footprint is dropped. Vertical faces are accepted only when
+    they are filled sheets.
     """
     cloud = np.asarray(points, float)
     dirs = _unit_rows(np.asarray(normals, float))
@@ -271,8 +273,9 @@ def reconstruct_mm(points, normals, wall_thickness_mm=150.0) -> dict:
         walls.append(_wall_from_plane(plane, wall_thickness_mm))
     walls = [wall for wall in walls if not _near_footprint(_box_centre(wall)[[0, 2]], footprints, margin=350)]
     walls = _dedupe_walls(walls)[:8]
+    buildings, walls, slabs = _drop_small_isolated(buildings, walls, slabs)
     solids = []
-    solids.extend(_ground_solids(grounds))
+    solids.extend(_ground_solids(grounds, _structure_polygons(buildings, walls, slabs)))
     solids.extend(_slab_solids(slabs))
     for index, wall in enumerate(walls, start=1):
         wall["name"] = f"muro_{index}"
@@ -902,16 +905,216 @@ def _box_centre(box):
     return origin + np.asarray(box["axisU"], float) * (box["width"] / 2) + np.asarray(box["axisV"], float) * (box["height"] / 2) + np.asarray(box["normal"], float) * (box["thickness"] / 2)
 
 
-def _ground_solids(grounds):
-    solids = []
-    ordered = sorted(grounds, key=lambda item: item["area"], reverse=True)
-    for index, ground in enumerate(ordered, start=1):
-        polygon = ground.get("polygon")
-        if polygon is None:
-            polygon = _hull(ground["xz"], cell=480.0)
-        polygon = np.asarray(polygon, float) if polygon is not None else None
-        if polygon is None or len(polygon) < 3:
+def _structure_polygons(buildings, walls, slabs):
+    """Plan footprints of the solids the terrain is allowed to surround."""
+    polygons = []
+    for building in buildings:
+        polygon = np.asarray(building.get("footprint") or [], float)
+        if len(polygon) >= 3:
+            polygons.append(polygon)
+    for wall in walls:
+        polygon = _box_xz_polygon(wall)
+        if polygon is not None and len(polygon) >= 3:
+            polygons.append(polygon)
+    for slab in slabs:
+        polygon = _hull(np.asarray(slab["xz"], float), cell=240.0)
+        if polygon is not None and len(polygon) >= 3:
+            polygons.append(polygon)
+    return polygons
+
+
+def _box_xz_polygon(box):
+    origin = np.asarray(box["origin"], float)
+    axis_u = np.asarray(box["axisU"], float)
+    normal = np.asarray(box["normal"], float)
+    corners = []
+    for along in (0.0, float(box["width"])):
+        for thick in (0.0, float(box["thickness"])):
+            point = origin + axis_u * along + normal * thick
+            corners.append([float(point[0]), float(point[2])])
+    return _hull(np.asarray(corners, float))
+
+
+def _raster_footprint(polygons, buffer_mm, cell=250.0):
+    """Grid cells of the object footprints dilated by about ``buffer_mm``."""
+    reach = max(1, int(round(float(buffer_mm) / float(cell))))
+    covered = set()
+    for polygon in polygons:
+        polygon = np.asarray(polygon, float)
+        low = polygon.min(0)
+        high = polygon.max(0)
+        i0 = int(np.floor(low[0] / cell)) - 1
+        i1 = int(np.floor(high[0] / cell)) + 1
+        j0 = int(np.floor(low[1] / cell)) - 1
+        j1 = int(np.floor(high[1] / cell)) + 1
+        inside = []
+        for i in range(i0, i1 + 1):
+            for j in range(j0, j1 + 1):
+                centre = np.array([(i + 0.5) * cell, (j + 0.5) * cell])
+                if _polygon_contains(polygon, centre) or _distance_to_polygon(polygon, centre) <= cell:
+                    inside.append((i, j))
+        limit = reach * reach + 0.25
+        for i, j in inside:
+            for di in range(-reach, reach + 1):
+                for dj in range(-reach, reach + 1):
+                    if di * di + dj * dj <= limit:
+                        covered.add((i + di, j + dj))
+    return covered, float(cell)
+
+
+def _drop_small_isolated(buildings, walls, slabs, link=2000.0):
+    """Drop a short fragment that does not touch the main cluster of objects.
+
+    The cluster that holds the building is the scene. A long wall on the main
+    ground stays even when it stands a few metres off. A small piece stays
+    when it touches that cluster. A fragment on a lower terrace that does not
+    touch the cluster is the floating piece (and must not keep its own slab).
+    """
+    records = []
+    for building in buildings:
+        polygon = np.asarray(building.get("footprint") or [], float)
+        centre = polygon.mean(0) if len(polygon) else np.zeros(2)
+        # Long side. A shed of a couple of metres is a real object; a 1.2 m blob is not.
+        small = float(building.get("width") or 0.0) < 1600.0
+        records.append(_isolation_record("building", building, polygon, centre, small))
+    for wall in walls:
+        polygon = _box_xz_polygon(wall)
+        length = float(wall["width"])
+        records.append(_isolation_record("wall", wall, polygon, _box_centre(wall)[[0, 2]], length < 2000.0))
+    for slab in slabs:
+        cloud = np.asarray(slab["xz"], float)
+        polygon = _hull(cloud, cell=240.0)
+        centre = np.asarray(slab.get("centre", cloud.mean(0)), float)
+        records.append(_isolation_record("slab", slab, polygon, centre, float(slab.get("area") or 0.0) < 1_500_000.0))
+    if not records:
+        return buildings, walls, slabs
+    parent = np.arange(len(records))
+
+    def find(index):
+        index = int(index)
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = int(parent[index])
+        return index
+
+    for left in range(len(records)):
+        for right in range(left + 1, len(records)):
+            if _records_touch(records[left], records[right], link):
+                parent[find(right)] = find(left)
+    groups = {}
+    for index, record in enumerate(records):
+        groups.setdefault(find(index), []).append(record)
+    ranked = sorted(groups.values(), key=lambda group: (_group_anchor(group), _group_bulk(group)), reverse=True)
+    primary = 0
+    for index, group in enumerate(ranked):
+        if any(record["kind"] == "building" and not record["small"] for record in group):
+            primary = index
+            break
+    chosen = []
+    for index, group in enumerate(ranked):
+        if index == primary:
+            chosen.extend(group)
             continue
+        # A lower terrace that does not touch the main cluster is disconnected.
+        if group and max(_record_base_y(record) for record in group) < -350.0:
+            continue
+        if _group_anchor(group):
+            chosen.extend(group)
+    keep = {id(record["obj"]) for record in chosen}
+    return (
+        [item for item in buildings if id(item) in keep],
+        [item for item in walls if id(item) in keep],
+        [item for item in slabs if id(item) in keep],
+    )
+
+
+def _isolation_record(kind, obj, polygon, centre, small):
+    polygon = None if polygon is None else np.asarray(polygon, float)
+    centre = np.asarray(centre, float)
+    span = 0.0
+    if polygon is not None and len(polygon) >= 1:
+        span = float(np.linalg.norm(polygon.max(0) - polygon.min(0)))
+    return {"kind": kind, "obj": obj, "polygon": polygon, "centre": centre, "small": bool(small), "span": span}
+
+
+def _group_anchor(group):
+    return any(not record["small"] for record in group)
+
+
+def _record_base_y(record):
+    obj = record["obj"]
+    if record["kind"] == "wall":
+        centre = _box_centre(obj)
+        return float(centre[1] - float(obj["height"]) / 2.0)
+    if record["kind"] == "building":
+        return float(obj.get("baseY") or 0.0)
+    return float(obj.get("y") or 0.0)
+
+
+def _group_bulk(group):
+    return float(sum(record["span"] for record in group))
+
+
+def _records_touch(left, right, link):
+    if float(np.linalg.norm(left["centre"] - right["centre"])) > float(link) + left["span"] + right["span"]:
+        return False
+    poly_l = left["polygon"]
+    poly_r = right["polygon"]
+    if poly_l is None or poly_r is None or len(poly_l) < 2 or len(poly_r) < 2:
+        return float(np.linalg.norm(left["centre"] - right["centre"])) <= float(link)
+    for point in poly_l:
+        if _polygon_contains(poly_r, point) or _distance_to_polygon(poly_r, point) <= float(link):
+            return True
+    return False
+
+
+def _ground_solids(grounds, polygons=None, buffer_mm=1000.0):
+    """Terrain under the detected objects, dilated by about a metre.
+
+    Without objects the main ground is kept whole. With objects, points of a
+    terrace that never enter that buffer are a disconnected fragment (the
+    floating lower terrace) and are not written. A fragment that does touch
+    the buffer keeps only the touching part.
+    """
+    polygons = list(polygons or [])
+    mask = set()
+    cell = 250.0
+    if polygons:
+        mask, cell = _raster_footprint(polygons, buffer_mm, cell=cell)
+    pieces = []
+    for ground in grounds:
+        xz = np.asarray(ground["xz"], float)
+        if polygons:
+            if not mask or len(xz) == 0:
+                continue
+            keys = np.floor(xz / cell).astype(int)
+            keep = np.fromiter((tuple(map(int, key)) in mask for key in keys), dtype=bool, count=len(keys))
+            xz = xz[keep]
+        if len(xz) < 8:
+            continue
+        for component in _components_xz(xz, 800.0):
+            taken = xz[component]
+            if len(taken) < 10:
+                continue
+            area = _occupied_area(taken, 400.0)
+            # Scraps left by the buffer are not a second terrain slab.
+            if polygons and area < 1_000_000:
+                continue
+            polygon = _hull(taken, cell=480.0)
+            if polygon is None or len(polygon) < 3:
+                continue
+            pieces.append(
+                {
+                    "y": float(ground["y"]),
+                    "polygon": polygon,
+                    "area": area,
+                    "main": abs(float(ground["y"])) <= 200.0,
+                }
+            )
+    pieces.sort(key=lambda item: (item["main"], item["area"]), reverse=True)
+    solids = []
+    for index, piece in enumerate(pieces, start=1):
+        polygon = np.asarray(piece["polygon"], float)
         name = "terreno" if index == 1 else f"terreno_{index}"
         solids.append(
             {
@@ -919,7 +1122,7 @@ def _ground_solids(grounds):
                 "role": "terreno",
                 "kind": "slab",
                 "polygon": polygon.tolist(),
-                "y": 0.0 if index == 1 else float(ground["y"]),
+                "y": 0.0 if index == 1 or piece["main"] else float(piece["y"]),
                 "thickness": 80.0,
                 "width": float(polygon[:, 0].max() - polygon[:, 0].min()),
                 "height": float(polygon[:, 1].max() - polygon[:, 1].min()),
@@ -968,55 +1171,79 @@ def _opening_on_box(points, box, y0, y1):
     axis = np.asarray(box["axisU"], float)
     normal = np.asarray(box["normal"], float)
     length = float(box["width"])
-    if length < 1100 or y1 - y0 < 1500:
+    building_h = float(y1) - float(y0)
+    # The opening has to be a fraction of this building and still leave a lintel.
+    # A fixed 1.5 m wall rejected the tool shed (about 1.48 m) before the gap
+    # was even measured. 62% of the height is the shortest cut we accept.
+    if length < 700 or building_h <= 0 or building_h * 0.62 < 480:
         return None
     delta = points - origin
     along = delta @ axis
-    height = points[:, 1] - y0
     # Distance to the outer face. Thickness grows along normal, so the face is at 0.
     face_dist = delta @ normal
-    band = (np.abs(face_dist) < 160) & (along > 80) & (along < length - 80) & (height > 80) & (height < (y1 - y0) - 80)
+    band = (
+        (np.abs(face_dist) < 180)
+        & (along > 60)
+        & (along < length - 60)
+        & (points[:, 1] > y0 + 40)
+        & (points[:, 1] < y1 - 30)
+    )
     face = points[band]
-    if len(face) < 25:
+    if len(face) < 20:
         return None
     columns = 18
-    edges = np.linspace(80, length - 80, columns + 1)
-    lower_cut = (y1 - y0) * 0.72
+    edges = np.linspace(60, length - 60, columns + 1)
+    lower_cut = y0 + building_h * 0.48
     occupied = []
     for start, end in zip(edges[:-1], edges[1:]):
         column = face[(along[band] >= start) & (along[band] < end)]
-        lower = int(np.sum(column[:, 1] < y0 + lower_cut))
-        upper = int(np.sum(column[:, 1] >= y0 + lower_cut))
-        occupied.append((lower, upper))
-    empty = [lower < 2 for lower, _upper in occupied]
+        lower = int(np.sum(column[:, 1] < lower_cut))
+        upper = int(np.sum(column[:, 1] >= lower_cut))
+        occupied.append((lower, upper, column))
+    # Empty below and a lintel above. A column with no points at all is missing
+    # data, not a door.
+    empty = [lower < 2 and upper >= 1 for lower, upper, _column in occupied]
     best = None
     run_start = None
     for index, is_empty in enumerate(empty + [False]):
         if is_empty and run_start is None:
             run_start = index
         if not is_empty and run_start is not None:
-            run = empty[run_start:index]
-            if len(run) >= 2 and run_start > 0 and index < len(empty):
+            if run_start > 0 and index < len(empty) and index - run_start >= 2:
                 u0 = float(edges[run_start])
                 u1 = float(edges[index])
                 width = u1 - u0
-                if 480 <= width <= 1400:
-                    lintel = sum(upper for _lower, upper in occupied[run_start:index])
-                    if lintel >= 3 and (best is None or width > best[0]):
-                        best = (width, u0, u1)
+                lintel = sum(upper for _lower, upper, _column in occupied[run_start:index])
+                if 420 <= width <= 1600 and lintel >= 3 and (best is None or width > best[0]):
+                    best = (width, u0, u1, run_start, index)
             run_start = None
     if best is None:
         return None
-    _width, u0, u1 = best
+    _width, u0, u1, run_start, run_end = best
+    tops = []
+    for _lower, _upper, column in occupied[run_start:run_end]:
+        if len(column) == 0:
+            continue
+        above = column[:, 1][column[:, 1] >= lower_cut]
+        if len(above):
+            tops.append(float(above.min()))
+    if tops:
+        door_h = float(np.median(tops)) - float(y0) - 20.0
+    else:
+        door_h = building_h * 0.72
+    door_h = min(door_h, building_h - 50.0, building_h * 0.86)
+    # Relative to this building, not a 1.4 m leaf. A gap that is only a dent stays shut.
+    if door_h < building_h * 0.45:
+        return None
     return {
         "kind": "door",
         "wall": 0,
         "u0": round(u0, 1),
         "u1": round(u1, 1),
         "v0": 0.0,
-        "v1": round(min(y1 - y0 - 80.0, max(1400.0, (y1 - y0) * 0.72)), 1),
+        "v1": round(door_h, 1),
         "widthMm": round(u1 - u0, 1),
-        "heightMm": round(min(y1 - y0 - 80.0, max(1400.0, (y1 - y0) * 0.72)), 1),
+        "heightMm": round(door_h, 1),
     }
 
 

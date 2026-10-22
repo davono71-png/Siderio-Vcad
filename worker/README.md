@@ -57,9 +57,9 @@ Se le quote si contraddicono (lasciandone una fuori l'errore supera il 5%), `dia
 {"input": {"projectId": "<uuid>", "options": {"mode": "facciata"}}}
 ```
 
-`options.mode` accetta anche `oggetti` (in app: Oggetti-Esterni). È la ricostruzione per un esterno generico: terreno, muri in qualsiasi direzione, un corpo chiuso quando c’è una copertura, il resto in `extra.step`. Y resta l’asse verticale e il terreno principale è Y=0. Se `mode` è `facciata` ma la nuvola non è un solo muro di fondo, il worker passa da solo a `oggetti` e lo scrive in `note` (`fallbackFrom`). `stanza` non cambia.
+`options.mode` accetta anche `oggetti` (in app: Oggetti-Esterni). È la ricostruzione per un esterno generico: terreno, muri in qualsiasi direzione, un corpo chiuso quando c’è una copertura, il resto in `extra.step`. Y resta l’asse verticale e il terreno principale è Y=0. Il terreno copre l’impronta degli oggetti più circa un metro; un terrazzo che non tocca quell’impronta non viene scritto. Un pezzo piccolo e staccato dal gruppo principale si scarta. Una porta si intaglia anche su un edificio più basso di 1,5 m, se il vuoto è una frazione dell’altezza e ha stipiti e architrave. Se `mode` è `facciata` ma la nuvola non è un solo muro di fondo, il worker passa da solo a `oggetti` e lo scrive in `note` (`fallbackFrom`). `stanza` non cambia.
 
-Una quota i cui estremi non sono triangolati riporta quante viste registrate ha ciascun punto (`1 vista registrata su 1 osservazione`), non solo «punti non triangolati». Due osservazioni sullo stesso punto bastano; un punto con una sola osservazione non si può triangolare.
+Una quota entra nella scala quando entrambi gli estremi hanno almeno due viste registrate (foto con posa). Due distanze diverse sulla stessa coppia contano entrambe; la ripetizione identica no. Due click sulla stessa foto sono una sola vista. Se una vista in più è sbagliata, il punto si triangola con le altre. Una quota i cui estremi non sono triangolati riporta quante viste registrate ha ciascun punto (`1 viste registrate su 1 osservazioni`), non solo «punti non triangolati».
 
 ## Immagine Docker
 
