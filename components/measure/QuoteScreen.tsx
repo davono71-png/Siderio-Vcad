@@ -304,8 +304,8 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
         </div>
         <aside className="desk-side">
           <p className="font-serif text-2xl leading-tight">{name || "Rilievo"}</p>
-          <div className="mt-3 flex gap-2">
-            {(["stanza", "facciata"] as const).map((item) => (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(["stanza", "facciata", "oggetti"] as const).map((item) => (
               <button
                 key={item}
                 type="button"
@@ -629,6 +629,13 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
       </section>
       <section className="mt-6">
         <h2 className="font-serif text-2xl">Motore</h2>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(["stanza", "facciata", "oggetti"] as const).map((item) => (
+            <button key={item} type="button" className={`chip ${kind === item ? "chip-on" : ""}`} onClick={() => void changeKind(item)}>
+              {kindLabel(item)}
+            </button>
+          ))}
+        </div>
         <div className="mt-3">
           <GeometryToggle checked={geometry === "completa"} onChange={(next) => void changeGeometry(next)} />
         </div>

@@ -221,8 +221,8 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
         onChange={(event) => setProject({ ...project, name: event.target.value })}
         onBlur={() => void save({ name: project.name })}
       />
-      <div className="mt-3 flex gap-2">
-        {(["stanza", "facciata"] as const).map((kind) => (
+      <div className="mt-3 flex flex-wrap gap-2">
+        {(["stanza", "facciata", "oggetti"] as const).map((kind) => (
           <button
             key={kind}
             type="button"

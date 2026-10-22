@@ -70,11 +70,11 @@ function photosFrom(diagnosticRaw: unknown) {
   return { registered, total };
 }
 
-function kindFrom(scene: SceneDoc | null, projectRaw: unknown): "stanza" | "facciata" | null {
-  if (scene?.mode === "facciata" || scene?.mode === "stanza") return scene.mode;
+function kindFrom(scene: SceneDoc | null, projectRaw: unknown): "stanza" | "facciata" | "oggetti" | null {
+  if (scene?.mode === "facciata" || scene?.mode === "stanza" || scene?.mode === "oggetti") return scene.mode;
   const project = asRecord(asRecord(projectRaw)?.project);
   const kind = project?.kind;
-  return kind === "facciata" || kind === "stanza" ? kind : null;
+  return kind === "facciata" || kind === "stanza" || kind === "oggetti" ? kind : null;
 }
 
 export function engineReady() {

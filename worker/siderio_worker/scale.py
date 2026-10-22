@@ -105,11 +105,15 @@ def triangulate_project(project: dict, ray_fn):
                 rays.append(ray)
         info = {"label": label, "id": point.get("id"), "nObs": len(point.get("observations") or []), "nRegistered": len(rays), "unregistered": missing}
         if len(rays) >= 2:
-            xyz, extra = triangulate(rays)
-            located[label] = xyz
-            info.update({"method": "triangulated", "xyz": xyz.tolist(), **extra})
+            try:
+                xyz, extra = triangulate(rays)
+            except (np.linalg.LinAlgError, ValueError) as exc:
+                info["method"] = f"non usabile (triangolazione non riuscita: {exc})"
+            else:
+                located[label] = xyz
+                info.update({"method": "triangulated", "xyz": xyz.tolist(), **extra})
         else:
-            info["method"] = f"non usabile ({len(rays)} viste registrate)"
+            info["method"] = f"non usabile ({len(rays)} viste registrate su {info['nObs']} osservazioni)"
         report.append(info)
     return located, report
 
@@ -239,6 +243,27 @@ def _monte_carlo(project, ray_fn, used, scale, draws):
     return {key: round(float(np.std(values)), 1) if values else None for key, values in samples.items()}
 
 
+def _unlocated_reason(measure: dict, points: list) -> str:
+    """Say how many registered views each end has. Two stored clicks can still be one photo."""
+    by_label = {point.get("label"): point for point in points}
+    missing = []
+    for label in (measure.get("labelA"), measure.get("labelB")):
+        if not label:
+            continue
+        info = by_label.get(label)
+        if info is None:
+            missing.append(f"{label}: nessuna osservazione")
+            continue
+        registered = int(info.get("nRegistered") or 0)
+        observed = int(info.get("nObs") or 0)
+        if registered >= 2 and str(info.get("method", "")).startswith("triangulated"):
+            continue
+        missing.append(f"{label}: {registered} viste registrate su {observed} osservazioni")
+    if not missing:
+        return "punti non triangolati"
+    return "; ".join(missing)
+
+
 def render_markdown(report: dict) -> str:
     lines = [
         "# Scala",
@@ -260,7 +285,7 @@ def render_markdown(report: dict) -> str:
             lines.append(f"| {measure['pair']} | {measure['mm']:.1f} | | | duplicato |")
             continue
         if measure.get("modelMm") is None:
-            lines.append(f"| {measure['pair']} | {measure['mm']:.1f} | | | punti non triangolati |")
+            lines.append(f"| {measure['pair']} | {measure['mm']:.1f} | | | {_unlocated_reason(measure, report.get('points') or [])} |")
             continue
         lines.append(
             f"| {measure['pair']} | {measure['mm']:.1f} | {measure['modelMm']:.1f} | {measure['residMm']:+.1f} | {measure['residPct']:+.2f} |"

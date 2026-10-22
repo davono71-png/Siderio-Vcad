@@ -182,5 +182,191 @@ def _record_corner_result(scene_mm, fuse_warning):
         corner["action"] = action
 
 
+def export_oggetti_step(scene_mm: dict, out_step: str, extra_step: str | None = None, residual_mm=None):
+    """Named closed solids for a generic scene, plus an optional residual shell.
+
+    ``walls.step`` is an assembly Solid Edge can open: terreno, muro, edificio.
+    The residual cloud is a tessellated shell in ``extra.step``, not fused in.
+    """
+    import cadquery as cq
+
+    assembly = cq.Assembly(name="oggetti")
+    exported = []
+    for solid in scene_mm.get("solids_mm") or scene_mm.get("solids") or []:
+        shapes = _oggetti_shapes(cq, solid)
+        if not shapes:
+            continue
+        body = shapes[0]
+        for extra in shapes[1:]:
+            try:
+                body = body.fuse(extra)
+            except Exception as exc:
+                print(f"[oggetti] unione {solid.get('name')} non riuscita: {exc}", flush=True)
+                assembly.add(extra, name=f"{solid.get('name')}_parte")
+        try:
+            body = body.clean()
+        except Exception:
+            pass
+        assembly.add(body, name=str(solid.get("name") or solid.get("role") or "solido"))
+        exported.append({"name": solid.get("name"), "role": solid.get("role"), "kind": solid.get("kind")})
+    if not exported:
+        raise RuntimeError("Nessun solido da scrivere per gli oggetti.")
+    assembly.save(out_step)
+    written_extra = None
+    if extra_step and residual_mm is not None and len(residual_mm) >= 80:
+        mesh_solid = _residual_shell(residual_mm)
+        if mesh_solid is not None:
+            shell = cq.Assembly(name="extra")
+            shell.add(mesh_solid, name="residuo")
+            shell.save(extra_step)
+            written_extra = extra_step
+    return {"units": "mm", "solids": exported, "step": out_step, "extra": written_extra}
+
+
+def _oggetti_shapes(cq, solid):
+    kind = solid.get("kind")
+    if kind == "building":
+        shapes = []
+        for index, part in enumerate(solid.get("parts") or []):
+            shape = _box_shape(cq, part)
+            if shape is None:
+                continue
+            for opening in solid.get("openings") or []:
+                if opening.get("wall") == index:
+                    shape = _cut_opening(cq, shape, part, opening)
+            shapes.append(shape)
+        return shapes
+    if kind == "box":
+        shape = _box_shape(cq, solid)
+        return [shape] if shape is not None else []
+    if kind == "slab":
+        shape = _slab_shape(cq, solid)
+        return [shape] if shape is not None else []
+    return []
+
+
+def _box_shape(cq, box):
+    width = float(box["width"])
+    height = float(box["height"])
+    thickness = float(box["thickness"])
+    if width < 1 or height < 1 or thickness <= 0:
+        return None
+    origin = _vec(box["origin"])
+    axis_u = _vec(box["axisU"])
+    normal = _vec(box["normal"])
+    workplane = cq.Workplane(cq.Plane(origin, axis_u, normal))
+    return workplane.box(width, height, thickness, centered=(False, False, False)).val()
+
+
+def _cut_opening(cq, shape, box, opening):
+    import numpy as np
+
+    u0, u1 = float(opening["u0"]), float(opening["u1"])
+    v0, v1 = float(opening["v0"]), float(opening["v1"])
+    if u1 - u0 < 40 or v1 - v0 < 40:
+        return shape
+    thickness = float(box["thickness"])
+    origin = np.asarray(box["origin"], float)
+    axis_u = np.asarray(box["axisU"], float)
+    axis_v = np.asarray(box["axisV"], float)
+    normal = np.asarray(box["normal"], float)
+    corner = origin + axis_u * u0 + axis_v * v0 - normal * 20.0
+    cutter = (
+        cq.Workplane(cq.Plane(tuple(corner), tuple(axis_u), tuple(normal)))
+        .box(u1 - u0, v1 - v0, thickness + 40, centered=(False, False, False))
+        .val()
+    )
+    try:
+        return shape.cut(cutter)
+    except Exception as exc:
+        print(f"[oggetti] apertura non tagliata: {exc}", flush=True)
+        return shape
+
+
+def _slab_shape(cq, solid):
+    polygon = [(float(x), float(z)) for x, z in solid.get("polygon") or []]
+    if len(polygon) < 3:
+        return None
+    thickness = float(solid.get("thickness") or 80.0)
+    y = float(solid.get("y") or 0.0)
+    try:
+        work = cq.Workplane(cq.Plane((0, y, 0), (1, 0, 0), (0, -1, 0))).polyline(polygon).close()
+        return work.extrude(thickness).val()
+    except Exception as exc:
+        print(f"[oggetti] terreno semplificato ({exc})", flush=True)
+        xs = [point[0] for point in polygon]
+        zs = [point[1] for point in polygon]
+        return (
+            cq.Workplane(cq.Plane((min(xs), y, min(zs)), (1, 0, 0), (0, -1, 0)))
+            .box(max(xs) - min(xs), max(zs) - min(zs), thickness, centered=(False, False, False))
+            .val()
+        )
+
+
+def _residual_shell(points):
+    import numpy as np
+
+    from .complete import _mesh_solid
+
+    cloud = np.asarray(points, float)
+    if len(cloud) > 25000:
+        rng = np.random.default_rng(0)
+        cloud = cloud[rng.choice(len(cloud), 25000, replace=False)]
+    voxel = 140.0
+    keys = np.floor(cloud / voxel).astype(np.int64)
+    cells = np.unique(keys, axis=0)
+    if len(cells) < 30:
+        return None
+    if len(cells) > 8000:
+        voxel *= 2
+        cells = np.unique(np.floor(cloud / voxel).astype(np.int64), axis=0)
+    occupied = {tuple(int(v) for v in cell) for cell in cells}
+    vertices = []
+    faces = []
+
+    def add_face(corners):
+        start = len(vertices)
+        vertices.extend(corners)
+        faces.append((start, start + 1, start + 2))
+        faces.append((start, start + 2, start + 3))
+
+    for i, j, k in occupied:
+        for axis, normal in enumerate(((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))):
+            neighbour = (i + normal[0], j + normal[1], k + normal[2])
+            if neighbour in occupied:
+                continue
+            corners = _cell_face(i, j, k, axis, voxel)
+            add_face(corners)
+    if len(faces) < 40:
+        return None
+    try:
+        import trimesh
+    except ImportError:
+        return None
+    mesh = trimesh.Trimesh(np.asarray(vertices, float), np.asarray(faces, np.int64), process=False)
+    if len(mesh.faces) > 40000:
+        try:
+            mesh = mesh.simplify_quadric_decimation(40000)
+        except Exception:
+            pass
+    return _mesh_solid(mesh)
+
+
+def _cell_face(i, j, k, axis, voxel):
+    base = [i * voxel, j * voxel, k * voxel]
+    # Corners of the voxel, then the face looking along the axis index.
+    x0, y0, z0 = base
+    x1, y1, z1 = x0 + voxel, y0 + voxel, z0 + voxel
+    faces = [
+        [(x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1)],
+        [(x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0)],
+        [(x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)],
+        [(x0, y0, z0), (x0, y0, z1), (x1, y0, z1), (x1, y0, z0)],
+        [(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)],
+        [(x0, y0, z0), (x0, y1, z0), (x1, y1, z0), (x1, y0, z0)],
+    ]
+    return faces[axis]
+
+
 def _vec(values):
     return tuple(float(v) for v in values)

@@ -35,7 +35,7 @@ def main(argv=None):
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--downscale", type=int, default=2)
     parser.add_argument("--skip-dense", action="store_true")
-    parser.add_argument("--mode", choices=["stanza", "facciata"], help="stanza (default) o facciata")
+    parser.add_argument("--mode", choices=["stanza", "facciata", "oggetti"], help="stanza, facciata o oggetti")
     args = parser.parse_args(argv)
     if args.smoke or (not args.project_dir and not args.project_id):
         from smoke_test import main as smoke
