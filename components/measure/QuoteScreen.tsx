@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { getRepository } from "@/lib/data";
 import type { Measurement, NotablePoint, PhotoMeta, ProjectGeometry, ProjectKind, ScaleChecklist } from "@/lib/data/types";
 import { emptyChecklist } from "@/lib/data/types";
@@ -10,7 +10,7 @@ import { kindLabel } from "@/lib/format";
 import { closeViews, duplicateMeasurement } from "@/lib/measure/checks";
 import { scheduleManifest } from "@/lib/upload/runner";
 import { syncSurvey } from "@/lib/sync/client";
-import { fetchRemotePhoto } from "@/lib/upload/remote";
+import { fillRemoteThumbs } from "@/lib/upload/thumbs";
 import { useCoarsePointer, useWideScreen } from "@/lib/ui/media";
 import { GeometryToggle } from "../project/GeometryToggle";
 import { PageHeader } from "../ui/PageHeader";
@@ -19,7 +19,8 @@ import { LetterStrip } from "./LetterStrip";
 import { MmKeypad } from "./MmKeypad";
 import { PointThumb } from "./PointThumb";
 
-type Thumb = { photo: PhotoMeta; url: string };
+/** `url` is null while the thumbnail of a photo this device does not hold is still downloading. */
+type Thumb = { photo: PhotoMeta; url: string | null };
 
 export function QuoteScreen({ projectId }: { projectId: string }) {
   const [missing, setMissing] = useState(false);
@@ -43,6 +44,20 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
   const [engineNote, setEngineNote] = useState<string | null>(null);
   const wide = useWideScreen();
   const coarse = useCoarsePointer();
+  // Thumbnails fetched from the archive outlive repaints, so a sync never downloads them twice.
+  const remoteUrls = useRef(new Map<string, string>());
+  const fetching = useRef(new Set<string>());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    const cache = remoteUrls.current;
+    return () => {
+      mounted.current = false;
+      for (const url of cache.values()) URL.revokeObjectURL(url);
+      cache.clear();
+    };
+  }, []);
 
   useEffect(() => {
     const onFocus = () => {
@@ -73,17 +88,34 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
       if (cancelled) return false;
       const thumbById = new Map(thumbs.map((thumb) => [thumb.id, thumb.blob]));
       const next: Thumb[] = [];
+      const absent: PhotoMeta[] = [];
       for (const photo of storedPhotos.filter((item) => item.accepted)) {
         const blob = thumbById.get(photo.id);
-        let url: string | null = null;
-        if (blob) url = URL.createObjectURL(blob);
-        else if (photo.r2Key) {
-          const remote = await fetchRemotePhoto(photo.r2Key);
-          if (remote) url = URL.createObjectURL(remote);
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          urls.push(url);
+          next.push({ photo, url });
+          continue;
         }
-        if (!url) continue;
-        urls.push(url);
-        next.push({ photo, url });
+        const cached = remoteUrls.current.get(photo.id) ?? null;
+        if (!cached && !photo.r2Key) continue;
+        next.push({ photo, url: cached });
+        if (!cached && !fetching.current.has(photo.id)) absent.push(photo);
+      }
+      for (const photo of absent) fetching.current.add(photo.id);
+      if (absent.length) {
+        void fillRemoteThumbs(
+          absent,
+          (photoId, blob) => {
+            fetching.current.delete(photoId);
+            const url = URL.createObjectURL(blob);
+            remoteUrls.current.set(photoId, url);
+            setPhotos((current) => current.map((item) => (item.photo.id === photoId ? { ...item, url } : item)));
+          },
+          () => !mounted.current,
+        ).finally(() => {
+          for (const photo of absent) fetching.current.delete(photo.id);
+        });
       }
       setMissing(false);
       setPhotos(next);

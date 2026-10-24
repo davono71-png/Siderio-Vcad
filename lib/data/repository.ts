@@ -29,6 +29,8 @@ export interface RilievoRepository {
   listPhotos(projectId: string): Promise<PhotoMeta[]>;
   getPhoto(id: string): Promise<{ meta: PhotoMeta; blob: Blob | null } | null>;
   listThumbs(projectId: string): Promise<ThumbRecord[]>;
+  /** Keep a thumbnail made from the archive copy, so the next visit does not download the photo again. */
+  saveThumb(thumb: ThumbRecord): Promise<void>;
   addPhoto(input: NewPhotoInput): Promise<PhotoMeta>;
   deletePhoto(id: string): Promise<void>;
 

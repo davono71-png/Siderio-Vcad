@@ -15,7 +15,8 @@ export function PointThumb({
   frame,
 }: {
   photo: PhotoMeta;
-  url: string;
+  /** Null while the thumbnail is still on its way from the archive. */
+  url: string | null;
   points: NotablePoint[];
   /** Width / height of the tile, fixed by its CSS class. */
   frame: number;
@@ -41,14 +42,18 @@ export function PointThumb({
 
   return (
     <span className="point-thumb">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt={`Foto ${photo.sequence}`}
-        onLoad={(event) =>
-          setNatural({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })
-        }
-      />
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={`Foto ${photo.sequence}`}
+          onLoad={(event) =>
+            setNatural({ w: event.currentTarget.naturalWidth, h: event.currentTarget.naturalHeight })
+          }
+        />
+      ) : (
+        <span className="point-thumb-wait">Carico…</span>
+      )}
       {box && marks.length ? (
         <span
           className="point-thumb-box"
