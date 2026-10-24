@@ -228,10 +228,60 @@ select {
   background: white;
 }
 
-.photo-tile img {
+.photo-tile .point-thumb {
   aspect-ratio: 1;
+}
+
+/* The whole photo, so every notable point placed on it stays visible. */
+.point-thumb {
+  position: relative;
+  display: block;
   width: 100%;
-  object-fit: cover;
+  overflow: hidden;
+  background: #1c1c1c;
+}
+
+.point-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.point-thumb-box {
+  position: absolute;
+  pointer-events: none;
+}
+
+.point-thumb-mark {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.point-thumb-mark i {
+  position: absolute;
+  left: -0.22rem;
+  top: -0.22rem;
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px white;
+}
+
+.point-thumb-mark b {
+  position: absolute;
+  left: 0.3rem;
+  top: -0.95rem;
+  padding: 0 0.2rem;
+  border-radius: 0.25rem;
+  background: rgb(0 0 0 / 0.7);
+  color: white;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 0.9rem;
+  white-space: nowrap;
 }
 
 .photo-tile span {
@@ -795,11 +845,8 @@ select {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-.desk-thumb img {
-  display: block;
-  width: 100%;
-  height: 4.5rem;
-  object-fit: cover;
+.desk-thumb .point-thumb {
+  aspect-ratio: 4 / 3;
 }
 
 .desk-thumb span {

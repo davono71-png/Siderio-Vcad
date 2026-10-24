@@ -17,6 +17,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { Annotator } from "./Annotator";
 import { LetterStrip } from "./LetterStrip";
 import { MmKeypad } from "./MmKeypad";
+import { PointThumb } from "./PointThumb";
 
 type Thumb = { photo: PhotoMeta; url: string };
 
@@ -283,8 +284,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
               className={`desk-thumb ${active?.photo.id === photo.id ? "on" : ""}`}
               onClick={() => setActivePhoto(photo.id)}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt={`Foto ${photo.sequence}`} />
+              <PointThumb photo={photo} url={url} points={points} frame={4 / 3} />
               <span>{String(photo.sequence).padStart(3, "0")}</span>
             </button>
           ))}
@@ -483,8 +483,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
             return (
               <li key={photo.id}>
                 <Link href={`/rilievo/${projectId}/quote/${photo.id}`} className="photo-tile">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt={`Foto ${photo.sequence}`} />
+                  <PointThumb photo={photo} url={url} points={points} frame={1} />
                   <span>
                     {String(photo.sequence).padStart(3, "0")}
                     {names.length ? ` · ${names.join(" ")}` : ""}
