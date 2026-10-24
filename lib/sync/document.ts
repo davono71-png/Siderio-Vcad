@@ -11,6 +11,7 @@ import type {
   ProjectGeometry,
   ProjectJob,
   ProjectKind,
+  RemovedObservation,
   RejectReason,
   ScaleChecklist,
 } from "../data/types";
@@ -31,6 +32,8 @@ export type SurveyPoint = {
   id: string;
   label: string;
   observations: SurveyObservation[];
+  /** Clicks taken off a photo, so a merge does not bring them back. Absent when empty. */
+  removed?: RemovedObservation[];
   updatedAt: string;
 };
 
@@ -186,6 +189,24 @@ function asObservations(value: unknown): SurveyObservation[] {
   return observations;
 }
 
+function asRemoved(value: unknown): RemovedObservation[] {
+  if (!Array.isArray(value)) return [];
+  const removed: RemovedObservation[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Partial<RemovedObservation>;
+    if (typeof record.photoId !== "string" || !record.photoId) continue;
+    if (typeof record.at !== "string" || !Number.isFinite(Date.parse(record.at))) continue;
+    removed.push({ photoId: record.photoId, at: record.at });
+  }
+  return removed;
+}
+
+/** Spreads `removed` only when there is something in it, so old documents keep their signature. */
+export function withRemoved<T extends object>(point: T, removed: RemovedObservation[] | undefined): T {
+  return removed && removed.length ? { ...point, removed } : point;
+}
+
 function asWarnings(value: unknown, flag: PhotoWarning | null): PhotoWarning[] {
   const allowed = new Set<PhotoWarning>(["rotazione", "sovrapposizione", "texture"]);
   if (!Array.isArray(value)) return flag ? [flag] : [];
@@ -242,12 +263,15 @@ function asPoint(value: unknown, fallback: string): SurveyPoint | null {
       ? record.id
       : legacyId("point", typeof record.label === "string" ? record.label : "");
   if (!id) return null;
-  return {
-    id,
-    label: asString(record.label, "A").slice(0, 40),
-    observations: asObservations(record.observations),
-    updatedAt: asIso(record.updatedAt, fallback),
-  };
+  return withRemoved(
+    {
+      id,
+      label: asString(record.label, "A").slice(0, 40),
+      observations: asObservations(record.observations),
+      updatedAt: asIso(record.updatedAt, fallback),
+    },
+    asRemoved(record.removed),
+  );
 }
 
 function asMeasurement(value: unknown, fallback: string): SurveyMeasurement | null {
@@ -396,12 +420,17 @@ export function documentFromParts(input: {
       uploadedAt: photo.uploadedAt,
       updatedAt: photo.updatedAt || photo.uploadedAt || photo.createdAt || fallback,
     })),
-    points: input.points.map((point) => ({
-      id: point.id,
-      label: point.label,
-      observations: point.observations,
-      updatedAt: point.updatedAt || fallback,
-    })),
+    points: input.points.map((point) =>
+      withRemoved(
+        {
+          id: point.id,
+          label: point.label,
+          observations: point.observations,
+          updatedAt: point.updatedAt || fallback,
+        },
+        point.removed,
+      ),
+    ),
     measurements: input.measurements.map((measurement) => ({
       id: measurement.id,
       pointA: measurement.pointA,
@@ -456,6 +485,7 @@ export function pointFromSurvey(point: SurveyPoint, projectId: string): NotableP
     projectId,
     label: point.label,
     observations: point.observations,
+    removed: point.removed ?? [],
     updatedAt: point.updatedAt,
     deletedAt: null,
   };

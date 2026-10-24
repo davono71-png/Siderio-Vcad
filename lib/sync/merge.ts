@@ -1,4 +1,4 @@
-import { contentSignature, timeOf, type SurveyDocument, type SurveyMeasurement, type SurveyPhoto, type SurveyPoint, type Tombstone } from "./document";
+import { contentSignature, timeOf, withRemoved, type SurveyDocument, type SurveyMeasurement, type SurveyPhoto, type SurveyPoint, type Tombstone } from "./document";
 
 function later(a: string | null | undefined, b: string | null | undefined) {
   return timeOf(a) >= timeOf(b) ? (a ?? b ?? "") : (b ?? a ?? "");
@@ -38,6 +38,12 @@ function mergePoint(left: SurveyPoint | undefined, right: SurveyPoint | undefine
   if (!right) return left;
   const newer = timeOf(left.updatedAt) >= timeOf(right.updatedAt) ? left : right;
   const older = newer === left ? right : left;
+  const removedAt = new Map<string, string>();
+  for (const source of [older, newer]) {
+    for (const item of source.removed ?? []) {
+      removedAt.set(item.photoId, later(removedAt.get(item.photoId), item.at));
+    }
+  }
   const byPhoto = new Map<string, { observation: SurveyPoint["observations"][number]; at: number }>();
   for (const source of [older, newer]) {
     for (const observation of source.observations) {
@@ -46,11 +52,24 @@ function mergePoint(left: SurveyPoint | undefined, right: SurveyPoint | undefine
       if (!previous || at >= previous.at) byPhoto.set(observation.photoId, { observation, at });
     }
   }
-  return {
-    ...newer,
-    updatedAt: later(left.updatedAt, right.updatedAt),
-    observations: [...byPhoto.values()].map((item) => item.observation),
-  };
+  // A click taken off a photo stays off unless a copy saved after the removal still has it.
+  for (const [photoId, item] of byPhoto) {
+    const removed = removedAt.get(photoId);
+    if (removed && timeOf(removed) >= item.at) byPhoto.delete(photoId);
+  }
+  const removed = [...removedAt]
+    .filter(([photoId]) => !byPhoto.has(photoId))
+    .map(([photoId, at]) => ({ photoId, at }))
+    .sort((a, b) => a.photoId.localeCompare(b.photoId));
+  return withRemoved(
+    {
+      id: newer.id,
+      label: newer.label,
+      updatedAt: later(left.updatedAt, right.updatedAt),
+      observations: [...byPhoto.values()].map((item) => item.observation),
+    },
+    removed,
+  );
 }
 
 function mergeMeasurement(left: SurveyMeasurement | undefined, right: SurveyMeasurement | undefined) {
