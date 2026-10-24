@@ -17,6 +17,8 @@ import numpy as np
 from . import facade
 
 _UP = np.array([0.0, 1.0, 0.0])
+# Smallest rise that makes a second ground level (one step: a raised terrace).
+_LEVEL_STEP_MM = 120.0
 _CONVENTION = (
     "Asse verticale: Y. Il terreno principale è Y=0. X e Z sono orizzontali, "
     "origine nell'angolo minimo della scena. Lo spessore dei muri cresce verso l'interno "
@@ -46,6 +48,7 @@ def assumptions_hold(
         return True
     cameras_arr = np.asarray(cameras, float).reshape(-1, 3) if cameras is not None and len(cameras) else np.zeros((0, 3))
     up, _source = facade._estimate_up(cloud, norms, cameras_arr, camera_ups, up_prior, mm_per_unit, span)
+    up, _source = _plumb_up(norms, up, _source)
     level = facade._level_rotation(up)
     centre = cameras_arr.mean(0) if len(cameras_arr) else cloud.mean(0)
     leveled = (cloud - centre) @ level.T
@@ -113,8 +116,13 @@ def detect_oggetti(
     wall_thickness_mm=150.0,
     camera_ups=None,
     fallback_from=None,
+    colors=None,
 ):
-    """Level, reconstruct, and return a scene in model units plus millimetre solids."""
+    """Level, reconstruct, and return a scene in model units plus millimetre solids.
+
+    ``colors`` (0-255 RGB per point, optional) lets hedges and trees stay out
+    of the walls.
+    """
     cloud = np.asarray(points, float)
     norms = _unit_rows(np.asarray(normals, float))
     if len(cloud) < 80:
@@ -122,12 +130,14 @@ def detect_oggetti(
     span = float(np.linalg.norm(np.percentile(cloud, 95, axis=0) - np.percentile(cloud, 5, axis=0)))
     cameras_arr = np.asarray(cameras, float).reshape(-1, 3) if cameras is not None and len(cameras) else np.zeros((0, 3))
     up, up_source = facade._estimate_up(cloud, norms, cameras_arr, camera_ups, up_prior, mm_per_unit, span)
+    up, up_source = _plumb_up(norms, up, up_source)
     level = facade._level_rotation(up)
+    level = _yaw_to_walls(norms @ level.T) @ level
     centre = cameras_arr.mean(0) if len(cameras_arr) else cloud.mean(0)
     leveled = (cloud - centre) @ level.T
     dirs = norms @ level.T
     scale = float(mm_per_unit) if mm_per_unit else 1.0
-    built = reconstruct_mm(leveled * scale, dirs, wall_thickness_mm=wall_thickness_mm)
+    built = reconstruct_mm(leveled * scale, dirs, wall_thickness_mm=wall_thickness_mm, colors=colors)
     shift_mm = np.asarray(built["shift"], float)
     transform = np.eye(4)
     transform[:3, :3] = level
@@ -160,6 +170,45 @@ def detect_oggetti(
         "note": note,
         "dropped": built["dropped"],
     }
+
+
+def _plumb_up(normals, up, source):
+    """Walls are built plumb: up is the direction most orthogonal to the vertical faces.
+
+    The largest ground-like plane can be a sloping lawn or a sparse sheet of
+    noise, and a terrace has a drainage fall. Faces in two or more directions
+    pin the vertical better than any of them. Without them, ``up`` stays.
+    """
+    up = _unit(up)
+    refined = up
+    for _ in range(3):
+        vertical = np.abs(normals @ refined) < 0.3
+        if int(vertical.sum()) < 500:
+            return up, source
+        faces = normals[vertical]
+        values, vectors = np.linalg.eigh(faces.T @ faces / len(faces))
+        # One direction of faces only fixes one tilt axis.
+        if values[1] < 0.12 or values[0] > 0.04:
+            return up, source
+        refined = vectors[:, 0] * (1.0 if float(vectors[:, 0] @ up) >= 0 else -1.0)
+    if float(refined @ up) < np.cos(np.radians(15)):
+        return up, source
+    return refined, source + "+muri"
+
+
+def _yaw_to_walls(normals) -> np.ndarray:
+    """Rows yaw a Y-up frame so the main wall directions run along X and Z."""
+    vertical = np.abs(normals[:, 1]) < 0.3
+    flat = normals[vertical][:, [0, 2]]
+    length = np.linalg.norm(flat, axis=1)
+    flat = flat[length > 0.5]
+    if len(flat) < 200:
+        return np.eye(3)
+    # Angle times four folds the four faces of a rectangular body onto one direction.
+    angle = 4.0 * np.arctan2(flat[:, 1], flat[:, 0])
+    yaw = float(np.arctan2(np.sin(angle).sum(), np.cos(angle).sum()) / 4.0)
+    c, s = np.cos(yaw), np.sin(yaw)
+    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
 
 
 def to_millimetres(scene: dict, mm_per_unit: float | None = None) -> dict:
@@ -199,18 +248,19 @@ def to_millimetres(scene: dict, mm_per_unit: float | None = None) -> dict:
     }
 
 
-def reconstruct_mm(points, normals, wall_thickness_mm=150.0) -> dict:
+def reconstruct_mm(points, normals, wall_thickness_mm=150.0, colors=None) -> dict:
     """Y-up cloud in millimetres. The main ground is Y=0. X/Z start at the occupied minimum.
 
     One dominant ground, roofs that are real slabs (nothing continues above
     them), thin caps as walls, thick footprints as buildings. Terrain is the
     footprint of those objects plus about a metre, and a terrace that does not
     touch that footprint is dropped. Vertical faces are accepted only when
-    they are filled sheets.
+    they are filled sheets. With colours, dark or green points (hedges, trees)
+    do not make walls or caps; they still count for the ground.
     """
     cloud = np.asarray(points, float)
     dirs = _unit_rows(np.asarray(normals, float))
-    sample, dirs = _prepare(cloud, dirs, voxel=70.0, min_count=3)
+    sample, dirs, tint = _prepare(cloud, dirs, voxel=70.0, min_count=3, colors=colors)
     grounds = _ground_planes(sample, dirs)
     main_y = float(grounds[0]["y"]) if grounds else float(np.percentile(sample[:, 1], 8))
     shift = np.array([
@@ -225,7 +275,10 @@ def reconstruct_mm(points, normals, wall_thickness_mm=150.0) -> dict:
         plane["polygon"] = _hull(plane["xz"], cell=480.0)
     if grounds:
         grounds[0]["y"] = 0.0
-    caps = _elevated_slabs(sample, dirs, grounds)
+    built_up = ~_vegetation(tint) if tint is not None else np.ones(len(sample), dtype=bool)
+    if int(built_up.sum()) < 40:
+        built_up[:] = True
+    caps = _elevated_slabs(sample[built_up], dirs[built_up], grounds)
     buildings = []
     footprints = []
     walls = []
@@ -256,14 +309,14 @@ def reconstruct_mm(points, normals, wall_thickness_mm=150.0) -> dict:
                 wall = _wall_from_cap(piece, float(cap["y"]), base, wall_thickness_mm)
                 if wall is not None and _cap_is_wall(sample, dirs, piece, base, float(cap["y"])):
                     walls.append(wall)
-    roof_line = max([float(building["roofY"]) for building in buildings], default=2200.0)
-    for plane in _vertical_sheets(sample, dirs, grounds):
+    for plane in _vertical_sheets(sample[built_up], dirs[built_up], grounds):
         if _covered_by_building(plane, footprints):
             continue
-        # A face much taller than every roof is the edge of a canopy, not a wall.
-        if float(plane["y1"]) > roof_line + 700 and float(plane["height"]) > min(roof_line + 500, 1900):
-            continue
         base = _support_y(np.asarray(plane["centre"], float)[[0, 2]], float(plane["y1"]), grounds)
+        # A face that starts high above its ground is the edge of a canopy, not a wall.
+        # A wall taller than a counter is still a wall: a shed without a seen roof.
+        if float(plane["y0"]) >= base + 900:
+            continue
         if float(plane["y0"]) > base + 180 and float(plane["y0"]) < base + 900:
             origin = np.array(plane["origin"], float)
             origin[1] = base
@@ -377,9 +430,13 @@ def _to_builtin(value):
     return value
 
 
-def _prepare(points, normals, voxel, min_count=1):
+def _prepare(points, normals, voxel, min_count=1, colors=None):
     means, inverse, counts, keys = _voxel_means(points, voxel)
     nsum = np.column_stack([np.bincount(inverse, weights=normals[:, axis]) for axis in range(3)])
+    tint = None
+    if colors is not None and len(colors) == len(points):
+        rgb = np.asarray(colors, float)
+        tint = np.column_stack([np.bincount(inverse, weights=rgb[:, axis]) / counts for axis in range(3)])
     length = np.linalg.norm(nsum, axis=1)
     averaged = nsum / np.maximum(length, 1e-12)[:, None]
     dense = counts >= int(min_count)
@@ -397,6 +454,8 @@ def _prepare(points, normals, voxel, min_count=1):
             if any((base[0] + dx, base[1] + dy, base[2] + dz) in occupied for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)):
                 keep[index] = True
     means, averaged, keys = means[keep], averaged[keep], keys[keep]
+    if tint is not None:
+        tint = tint[keep]
     vertical = float((np.abs(averaged[:, 1]) <= 0.34).mean()) if len(averaged) else 0.0
     if vertical < 0.04 and len(means):
         averaged = _pca_normals(points, means, keys, voxel)
@@ -410,7 +469,15 @@ def _prepare(points, normals, voxel, min_count=1):
                 mask |= chosen
         if int(mask.sum()) >= 40:
             means, averaged = means[mask], averaged[mask]
-    return means, _unit_rows(averaged)
+            if tint is not None:
+                tint = tint[mask]
+    return means, _unit_rows(averaged), tint
+
+
+def _vegetation(tint):
+    """Leaves are green or, in a hedge's shade, nearly black. Plaster in shadow stays grey."""
+    red, green, blue = tint[:, 0], tint[:, 1], tint[:, 2]
+    return ((green > red + 6) & (green > blue - 10)) | (tint.sum(axis=1) < 120)
 
 
 def _voxel_means(points, voxel):
@@ -453,21 +520,22 @@ def _ground_planes(points, normals):
         return [{"y": y, "xz": points[:, [0, 2]], "area": _occupied_area(points[:, [0, 2]], 400.0), "count": len(points)}]
     horizontal = points[mask]
     y0 = float(horizontal[:, 1].min())
-    bin_w = 110.0
+    # 40 mm bins summed over 120 mm: two levels one step apart stay two peaks.
+    bin_w = 40.0
     bins = np.floor((horizontal[:, 1] - y0) / bin_w).astype(int)
     bins = np.clip(bins, 0, None)
-    counts = np.bincount(bins)
+    counts = np.convolve(np.bincount(bins), np.ones(3), mode="same")
     peaks = []
     for index, count in enumerate(counts):
         if count < max(50, 0.025 * len(horizontal)):
             continue
-        left = counts[index - 1] if index else 0
-        right = counts[index + 1] if index + 1 < len(counts) else 0
-        if count >= left and count >= right:
+        if count >= counts[max(0, index - 3) : index + 4].max():
             peaks.append(y0 + (index + 0.5) * bin_w)
     candidates = []
     for peak in peaks:
-        band = horizontal[np.abs(horizontal[:, 1] - peak) < 190.0]
+        # A terrace one step above the lawn is its own level: the bands must not overlap.
+        gap = min([abs(peak - other) for other in peaks if other != peak], default=1000.0)
+        band = horizontal[np.abs(horizontal[:, 1] - peak) < min(190.0, max(60.0, 0.45 * gap))]
         if len(band) < 40:
             continue
         components = _components_xz(band[:, [0, 2]], 420.0)
@@ -491,11 +559,9 @@ def _ground_planes(points, normals):
     candidates.sort(key=lambda item: item["area"], reverse=True)
     kept = [candidates[0]]
     for extra in candidates[1:]:
-        if any(abs(extra["y"] - item["y"]) < 320 for item in kept):
+        if any(abs(extra["y"] - item["y"]) < _LEVEL_STEP_MM for item in kept):
             continue
         if extra["area"] < 3_200_000 or extra["area"] < 0.12 * kept[0]["area"]:
-            continue
-        if abs(extra["y"] - kept[0]["y"]) < 420:
             continue
         kept.append(extra)
         if len(kept) == 2:
@@ -511,7 +577,7 @@ def _elevated_slabs(points, normals, grounds):
         return []
     chosen = points[mask]
     support = np.array([_support_y(point[[0, 2]], float(point[1]), grounds) for point in chosen])
-    elevated = chosen[:, 1] > support + 520.0
+    elevated = chosen[:, 1] > support + 400.0
     chosen = chosen[elevated]
     if len(chosen) < 25:
         return []
@@ -549,7 +615,7 @@ def _elevated_slabs(points, normals, grounds):
         if any(abs(slab["y"] - other["y"]) < 200 and _mostly_inside(slab["xz"], other["xz"], margin=300) for other in kept):
             continue
         kept.append(slab)
-        if len(kept) == 6:
+        if len(kept) == 10:
             break
     return kept
 

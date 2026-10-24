@@ -1156,10 +1156,53 @@ def check_oggetti():
     print("oggetti", ", ".join(names))
 
 
+def check_oggetti_level():
+    """Plumb walls fix a tilt the ground got wrong; hedges stay out; a shed without a seen roof keeps its walls."""
+    rng = np.random.default_rng(7)
+    tilt = np.radians(5.0)
+    roll = np.array([[1.0, 0.0, 0.0], [0.0, np.cos(tilt), -np.sin(tilt)], [0.0, np.sin(tilt), np.cos(tilt)]])
+    yaw = np.radians(31.0)
+    turn = np.array([[np.cos(yaw), 0.0, np.sin(yaw)], [0.0, 1.0, 0.0], [-np.sin(yaw), 0.0, np.cos(yaw)]])
+    faces = [np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0])]
+    normals = np.vstack([np.tile(face, (400, 1)) + rng.normal(0, 0.03, (400, 3)) for face in faces])
+    normals = np.vstack([normals, np.tile([0.0, 1.0, 0.0], (300, 1))]) @ turn.T @ roll.T
+    up, source = oggetti._plumb_up(oggetti._unit_rows(normals), np.array([0.0, 1.0, 0.0]), "gravita")
+    true_up = roll @ np.array([0.0, 1.0, 0.0])
+    assert source == "gravita+muri", source
+    assert np.degrees(np.arccos(min(1.0, float(up @ true_up)))) < 0.5, up
+    one_way = np.tile([1.0, 0.0, 0.0], (600, 1)) + rng.normal(0, 0.03, (600, 3))
+    assert oggetti._plumb_up(oggetti._unit_rows(one_way), np.array([0.0, 1.0, 0.0]), "gravita")[1] == "gravita"
+    level = oggetti._yaw_to_walls(oggetti._unit_rows(normals @ roll))
+    aligned = oggetti._unit_rows(normals @ roll) @ level.T
+    walls_only = np.abs(aligned[:, 1]) < 0.3
+    angles = np.degrees(np.arctan2(aligned[walls_only, 2], aligned[walls_only, 0])) % 90.0
+    assert np.median(np.minimum(angles, 90.0 - angles)) < 2.0, np.median(angles)
+
+    ground = np.column_stack([rng.uniform(0, 9000, 4000), rng.normal(0, 10, 4000), rng.uniform(0, 7000, 4000)])
+    parts = [(ground, np.tile([0.0, 1.0, 0.0], (len(ground), 1)), [150, 150, 150])]
+    for x0, x1, z0, z1, normal in ((2000, 5000, 2000, 2000, [0, 0, -1]), (2000, 2000, 2000, 4500, [-1, 0, 0])):
+        count = 900
+        xs = rng.uniform(x0, x1, count) if x0 != x1 else rng.normal(x0, 10, count)
+        zs = rng.uniform(z0, z1, count) if z0 != z1 else rng.normal(z0, 10, count)
+        parts.append((np.column_stack([xs, rng.uniform(0, 2300, count), zs]), np.tile(np.asarray(normal, float), (count, 1)), [170, 170, 165]))
+    hedge = np.column_stack([rng.uniform(1000, 8000, 1500), rng.uniform(0, 1800, 1500), rng.normal(6200, 25, 1500)])
+    parts.append((hedge, np.tile([0.0, 0.0, -1.0], (len(hedge), 1)), [30, 60, 25]))
+    points = np.vstack([item[0] for item in parts])
+    normals = np.vstack([item[1] for item in parts])
+    colors = np.vstack([np.tile(item[2], (len(item[0]), 1)) for item in parts]).astype(float)
+    built = oggetti.reconstruct_mm(points, normals, wall_thickness_mm=150, colors=colors)
+    walls_found = [solid for solid in built["solids"] if solid["name"].startswith("muro")]
+    assert sum(solid["height"] > 2000 for solid in walls_found) >= 2, [(solid["name"], solid["height"]) for solid in walls_found]
+    shift_z = float(built["shift"][2])
+    assert not any(abs(oggetti._box_centre(solid)[2] - (6200 + shift_z)) < 300 for solid in walls_found), "la siepe non è un muro"
+    print("oggetti livella", source, len(walls_found), "muri")
+
+
 def main():
     check_imports_and_options()
     check_scale()
     check_oggetti()
+    check_oggetti_level()
     check_walls()
     check_ceiling_fallbacks()
     check_facade()
