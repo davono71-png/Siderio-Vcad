@@ -9,7 +9,7 @@ import type { PhotoMeta, Project, ProjectKind } from "@/lib/data/types";
 import { formatWhen, kindLabel } from "@/lib/format";
 import { scheduleManifest } from "@/lib/upload/runner";
 import { deleteRemoteSurvey, syncSurvey } from "@/lib/sync/client";
-import { fetchRemotePhoto } from "@/lib/upload/remote";
+import { fillRemoteThumbs } from "@/lib/upload/thumbs";
 import { AppVersion } from "../pwa/AppVersion";
 import { usePullToRefresh } from "../pwa/PullToRefresh";
 import { checkForAppUpdate } from "../pwa/update";
@@ -100,14 +100,17 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     }
 
     async function fillRemote(remote: PhotoMeta[]) {
-      for (const photo of remote) {
-        if (cancelled || !photo.r2Key) continue;
-        const blob = await fetchRemotePhoto(photo.r2Key);
-        if (cancelled || !blob) continue;
-        const url = URL.createObjectURL(blob);
-        urls.push(url);
-        setThumbs((current) => (current.some((item) => item.photo.id === photo.id) ? current : [...current, { photo, url }]));
-      }
+      await fillRemoteThumbs(
+        remote,
+        (photoId, blob) => {
+          const photo = remote.find((item) => item.id === photoId);
+          if (!photo) return;
+          const url = URL.createObjectURL(blob);
+          urls.push(url);
+          setThumbs((current) => (current.some((item) => item.photo.id === photo.id) ? current : [...current, { photo, url }]));
+        },
+        () => cancelled,
+      );
     }
 
     void (async () => {

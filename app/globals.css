@@ -248,6 +248,14 @@ select {
   object-fit: contain;
 }
 
+.point-thumb-wait {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: #9a9a9a;
+  font-size: 0.68rem;
+}
+
 .point-thumb-box {
   position: absolute;
   pointer-events: none;

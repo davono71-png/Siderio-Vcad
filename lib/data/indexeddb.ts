@@ -380,6 +380,13 @@ export class IndexedDbRepository implements RilievoRepository {
     return database.getAllFromIndex("photoThumbs", "by-project", projectId);
   }
 
+  async saveThumb(thumb: ThumbRecord) {
+    const database = await db();
+    const meta = await database.get("photos", thumb.id);
+    if (!meta || meta.deletedAt) return;
+    await database.put("photoThumbs", thumb);
+  }
+
   async addPhoto(input: NewPhotoInput) {
     const database = await db();
     const existing = await database.getAllFromIndex("photos", "by-project", input.projectId);

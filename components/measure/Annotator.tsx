@@ -400,6 +400,7 @@ export function Annotator({
             ...existing.observations.filter((item) => item.photoId !== photoId),
             observation,
           ],
+          removed: (existing.removed ?? []).filter((item) => item.photoId !== photoId),
         };
       } else {
         next = { id: createId(), projectId, label: name, observations: [observation] };
@@ -426,6 +427,10 @@ export function Annotator({
     const next = {
       ...point,
       observations: point.observations.filter((item) => item.photoId !== photoId),
+      removed: [
+        ...(point.removed ?? []).filter((item) => item.photoId !== photoId),
+        { photoId, at: new Date().toISOString() },
+      ],
     };
     await getRepository().upsertPoint(next);
     scheduleManifest(projectId);

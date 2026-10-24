@@ -122,11 +122,15 @@ export type PointObservation = {
   rawY: number;
 };
 
+/** A click taken off one photo. Sync uses it so an older copy cannot put the click back. */
+export type RemovedObservation = { photoId: string; at: string };
+
 export type NotablePoint = {
   id: string;
   projectId: string;
   label: string;
   observations: PointObservation[];
+  removed?: RemovedObservation[];
   updatedAt?: string;
   deletedAt?: string | null;
 };

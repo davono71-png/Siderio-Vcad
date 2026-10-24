@@ -60,10 +60,13 @@ export async function putRemote(key: string, body: Blob, contentType: string) {
   if (!response.ok) throw new PresignError("put_failed", response.status);
 }
 
+/** A full photo is several megabytes; on a slow line 12 s dropped it. */
+const PHOTO_MS = 90_000;
+
 export async function fetchRemotePhoto(key: string) {
   try {
     const signed = await presign({ op: "get", key });
-    const response = await fetch(signed.url, { signal: AbortSignal.timeout(12_000) });
+    const response = await fetch(signed.url, { signal: AbortSignal.timeout(PHOTO_MS) });
     if (!response.ok) return null;
     return await response.blob();
   } catch {

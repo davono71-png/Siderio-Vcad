@@ -259,6 +259,37 @@ const kept = bothViews.points[0];
 assert(kept?.label === "A1", "il nome più recente vince");
 assert(kept?.observations.length === 2, "le osservazioni su foto diverse restano entrambe");
 
+const clicked = surveyDoc({
+  points: [
+    surveyPoint("p1", "A", "2026-10-09T10:00:00.000Z", [
+      { photoId: "f1", x: 10, y: 20, rawX: 10, rawY: 20 },
+      { photoId: "f2", x: 4, y: 5, rawX: 4, rawY: 5 },
+    ]),
+  ],
+});
+const unclicked = surveyDoc({
+  points: [
+    {
+      ...surveyPoint("p1", "A", "2026-10-09T11:00:01.000Z", [{ photoId: "f2", x: 4, y: 5, rawX: 4, rawY: 5 }]),
+      removed: [{ photoId: "f1", at: "2026-10-09T11:00:00.000Z" }],
+    },
+  ],
+});
+for (const [first, second] of [[clicked, unclicked], [unclicked, clicked]]) {
+  const fixed = mergeDocuments(first, second).points[0];
+  assert(fixed?.observations.map((item) => item.photoId).join() === "f2", "un clic tolto da una foto non torna dall'archivio");
+  assert(fixed?.removed?.[0]?.photoId === "f1", "la rimozione resta nel documento");
+}
+const reclicked = surveyDoc({
+  points: [surveyPoint("p1", "A", "2026-10-09T12:00:00.000Z", [{ photoId: "f1", x: 7, y: 8, rawX: 7, rawY: 8 }])],
+});
+const back = mergeDocuments(unclicked, reclicked).points[0];
+assert(back?.observations.some((item) => item.photoId === "f1" && item.x === 7) === true, "un clic rimesso dopo la rimozione resta");
+assert(back?.removed === undefined, "la rimozione superata sparisce");
+assert(!("removed" in (mergeDocuments(clicked, clicked).points[0] ?? {})), "senza rimozioni il punto non cambia forma");
+const rereadRemoved = parseSurveyDocument(JSON.parse(JSON.stringify(mergeDocuments(clicked, unclicked))));
+assert(rereadRemoved?.points[0]?.removed?.[0]?.at === "2026-10-09T11:00:00.000Z", "le rimozioni sopravvivono a project.json");
+
 const deleted = mergeDocuments(phone, {
   ...phone,
   points: [],
