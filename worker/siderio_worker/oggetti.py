@@ -577,7 +577,7 @@ def _elevated_slabs(points, normals, grounds):
         return []
     chosen = points[mask]
     support = np.array([_support_y(point[[0, 2]], float(point[1]), grounds) for point in chosen])
-    elevated = chosen[:, 1] > support + 400.0
+    elevated = chosen[:, 1] > support + 520.0
     chosen = chosen[elevated]
     if len(chosen) < 25:
         return []
@@ -615,7 +615,7 @@ def _elevated_slabs(points, normals, grounds):
         if any(abs(slab["y"] - other["y"]) < 200 and _mostly_inside(slab["xz"], other["xz"], margin=300) for other in kept):
             continue
         kept.append(slab)
-        if len(kept) == 10:
+        if len(kept) == 6:
             break
     return kept
 
