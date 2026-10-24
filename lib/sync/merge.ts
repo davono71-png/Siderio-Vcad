@@ -78,9 +78,10 @@ function mergeMeasurement(left: SurveyMeasurement | undefined, right: SurveyMeas
   return timeOf(left.updatedAt) >= timeOf(right.updatedAt) ? left : right;
 }
 
-function keepLive<T extends { id: string; updatedAt: string }>(item: T | null, tombs: Tombstone[]) {
-  if (!item) return { item: null as T | null, tomb: null as Tombstone | null };
-  const tomb = latestTomb(tombs, item.id);
+function keepLive<T extends { id: string; updatedAt: string }>(id: string, item: T | null, tombs: Tombstone[]) {
+  const tomb = latestTomb(tombs, id);
+  // Neither side still holds the item: keep its tombstone, or the deletion never reaches the archive.
+  if (!item) return { item: null as T | null, tomb };
   if (tomb && timeOf(tomb.deletedAt) >= timeOf(item.updatedAt)) return { item: null, tomb };
   return { item, tomb: null };
 }
@@ -107,7 +108,7 @@ export function mergeDocuments(left: SurveyDocument, right: SurveyDocument): Sur
       left.photos.find((item) => item.id === id),
       right.photos.find((item) => item.id === id),
     );
-    const kept = keepLive(merged, photoTombs);
+    const kept = keepLive(id, merged, photoTombs);
     if (kept.item) photos.push(kept.item);
     if (kept.tomb) photoTombstones.push(kept.tomb);
   }
@@ -119,7 +120,7 @@ export function mergeDocuments(left: SurveyDocument, right: SurveyDocument): Sur
       left.points.find((item) => item.id === id),
       right.points.find((item) => item.id === id),
     );
-    const kept = keepLive(merged, pointTombs);
+    const kept = keepLive(id, merged, pointTombs);
     if (kept.item) points.push(kept.item);
     if (kept.tomb) pointTombstones.push(kept.tomb);
   }
@@ -131,7 +132,7 @@ export function mergeDocuments(left: SurveyDocument, right: SurveyDocument): Sur
       left.measurements.find((item) => item.id === id),
       right.measurements.find((item) => item.id === id),
     );
-    const kept = keepLive(merged, measureTombs);
+    const kept = keepLive(id, merged, measureTombs);
     if (kept.item) measurements.push(kept.item);
     if (kept.tomb) measurementTombstones.push(kept.tomb);
   }
