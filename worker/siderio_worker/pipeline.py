@@ -117,7 +117,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
             else:
                 status.update(stage, 90, "Riconosco pavimento, soffitto e pareti", timings)
             with _timed(timings, "planes"):
-                points, normals = _load_cloud(os.path.join(mvs_dir, "scene_dense.ply"), mm_per_unit)
+                points, normals, colors = _load_cloud(os.path.join(mvs_dir, "scene_dense.ply"), mm_per_unit)
                 cameras, camera_ups = _camera_poses(dense_dir)
                 up = pose.get("upColmap") or sfm.image_up_prior(sfm_info["sparse"])
                 model_room, mode = _fit_model(
@@ -129,6 +129,7 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                     mm_per_unit,
                     up,
                     options,
+                    colors=colors,
                 )
                 model_room["mm_per_unit"] = mm_per_unit
             residual_mm = model_room.pop("residual_mm", None)
@@ -385,10 +386,11 @@ def _load_cloud(path: str, mm_per_unit: float):
     down = cloud.voxel_down_sample(voxel)
     down, _ = down.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
     down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 8, max_nn=40))
-    return np.asarray(down.points), np.asarray(down.normals)
+    colors = np.asarray(down.colors) * 255.0 if down.has_colors() else None
+    return np.asarray(down.points), np.asarray(down.normals), colors
 
 
-def _fit_model(mode, points, normals, cameras, camera_ups, mm_per_unit, up, options: Options):
+def _fit_model(mode, points, normals, cameras, camera_ups, mm_per_unit, up, options: Options, colors=None):
     """Stanza stays a room. Facciata stays one wall, unless that fit does not hold."""
     if mode == "oggetti" or (
         mode == "facciata"
@@ -412,6 +414,7 @@ def _fit_model(mode, points, normals, cameras, camera_ups, mm_per_unit, up, opti
                 wall_thickness_mm=options.wall_thickness_mm,
                 camera_ups=camera_ups,
                 fallback_from=fallback,
+                colors=colors,
             ),
             "oggetti",
         )
@@ -438,6 +441,7 @@ def _fit_model(mode, points, normals, cameras, camera_ups, mm_per_unit, up, opti
                 wall_thickness_mm=options.wall_thickness_mm,
                 camera_ups=camera_ups,
                 fallback_from="facciata",
+                colors=colors,
             ),
             "oggetti",
         )
