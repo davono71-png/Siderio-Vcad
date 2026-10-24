@@ -297,6 +297,9 @@ const deleted = mergeDocuments(phone, {
 });
 assert(deleted.points.length === 0 && deleted.tombstones.points[0]?.id === "p1", "un tombstone più recente toglie il punto");
 
+const gone = mergeDocuments(deleted, { ...deleted, points: [] });
+assert(gone.tombstones.points[0]?.id === "p1", "un tombstone resta anche quando nessuno dei due lati ha più il punto");
+
 const resurrected = mergeDocuments(deleted, surveyDoc({
   points: [surveyPoint("p1", "A", "2026-10-09T13:00:00.000Z", [{ photoId: "f1", x: 1, y: 1, rawX: 1, rawY: 1 }])],
 }));
