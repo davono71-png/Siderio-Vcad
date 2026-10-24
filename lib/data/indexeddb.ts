@@ -228,7 +228,7 @@ function normalizeProject(project: Project): Project | null {
     return {
       ...project,
       name: typeof project.name === "string" && project.name.trim() ? project.name : "Senza nome",
-      kind: project.kind === "stanza" || project.kind === "facciata" ? project.kind : "facciata",
+      kind: project.kind === "stanza" || project.kind === "facciata" || project.kind === "oggetti" ? project.kind : "facciata",
       notes: typeof project.notes === "string" ? project.notes : "",
       createdAt,
       updatedAt,

@@ -27,11 +27,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const env = engineEnv();
   if (!env) return Response.json({ ok: false, code: "missing_env" }, { status: 503, headers });
 
-  let mode: "stanza" | "facciata" = "facciata";
+  let mode: "stanza" | "facciata" | "oggetti" = "facciata";
   let geometry: "pareti" | "completa" = "pareti";
   try {
     const body = (await request.json()) as { mode?: string; geometry?: string };
-    if (body?.mode === "stanza" || body?.mode === "facciata") mode = body.mode;
+    if (body?.mode === "stanza" || body?.mode === "facciata" || body?.mode === "oggetti") mode = body.mode;
     if (body?.geometry === "completa" || body?.geometry === "pareti") geometry = body.geometry;
   } catch {
     /* An empty body still sends the rilievo, using the facade mode and walls only. */

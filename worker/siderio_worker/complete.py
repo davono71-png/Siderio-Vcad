@@ -41,7 +41,7 @@ ROLE_LABEL = {
 
 
 def scene_up(mode: str) -> np.ndarray:
-    if mode == "facciata":
+    if mode in ("facciata", "oggetti"):
         return np.array([0.0, 1.0, 0.0])
     return np.array([0.0, 0.0, 1.0])
 

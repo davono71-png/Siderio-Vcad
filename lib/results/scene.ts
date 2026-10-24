@@ -164,7 +164,7 @@ function roomShell(scene: SceneDoc): WallSolid[] {
 }
 
 export type ResultFacts = {
-  mode: "stanza" | "facciata" | null;
+  mode: "stanza" | "facciata" | "oggetti" | null;
   lengthMm: number | null;
   widthMm: number | null;
   heightMm: number | null;
@@ -172,7 +172,7 @@ export type ResultFacts = {
 };
 
 export function resultFacts(scene: SceneDoc | null): ResultFacts {
-  const mode = scene?.mode === "facciata" || scene?.mode === "stanza" ? scene.mode : null;
+  const mode = scene?.mode === "facciata" || scene?.mode === "stanza" || scene?.mode === "oggetti" ? scene.mode : null;
   const background = scene?.planes?.find((plane) => plane.role === "background");
   const doors = (scene?.openings ?? [])
     .filter((opening) => (opening.kind ?? "door") === "door")
@@ -184,8 +184,8 @@ export function resultFacts(scene: SceneDoc | null): ResultFacts {
   return {
     mode,
     lengthMm: num(background?.widthMm) ?? num(scene?.dims?.length_x),
-    widthMm: mode === "facciata" ? null : num(scene?.dims?.width_y),
-    heightMm: num(background?.heightMm) ?? num(scene?.dims?.height_z),
+    widthMm: mode === "facciata" ? null : mode === "oggetti" ? num(scene?.dims?.height_z) : num(scene?.dims?.width_y),
+    heightMm: mode === "oggetti" ? num(scene?.dims?.width_y) : (num(background?.heightMm) ?? num(scene?.dims?.height_z)),
     doors,
   };
 }

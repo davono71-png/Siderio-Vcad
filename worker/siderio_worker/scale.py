@@ -25,10 +25,17 @@ def triangulate(rays: list[Ray]):
     accum = np.zeros((3, 3))
     rhs = np.zeros(3)
     for ray in rays:
-        proj = np.eye(3) - np.outer(ray.direction, ray.direction)
+        direction = np.asarray(ray.direction, float)
+        direction = direction / max(float(np.linalg.norm(direction)), 1e-12)
+        proj = np.eye(3) - np.outer(direction, direction)
         accum += proj
-        rhs += proj @ ray.centre
-    seed = np.linalg.solve(accum, rhs)
+        rhs += proj @ np.asarray(ray.centre, float)
+    try:
+        seed = np.linalg.solve(accum, rhs)
+    except np.linalg.LinAlgError:
+        seed = np.linalg.lstsq(accum, rhs, rcond=1e-8)[0]
+    if not np.all(np.isfinite(seed)):
+        raise ValueError("Raggi paralleli.")
 
     def residual(xyz):
         rows = []
@@ -40,9 +47,17 @@ def triangulate(rays: list[Ray]):
                 rows.append(np.asarray(px, float) - ray.uv)
         return np.concatenate(rows)
 
-    from scipy.optimize import least_squares
+    solved = np.asarray(seed, float)
+    try:
+        from scipy.optimize import least_squares
 
-    solved = least_squares(residual, seed, method="lm").x
+        refined = least_squares(residual, seed, method="lm").x
+        seed_cost = float(np.dot(residual(seed), residual(seed)))
+        refined_cost = float(np.dot(residual(refined), residual(refined)))
+        if np.all(np.isfinite(refined)) and refined_cost <= seed_cost * 1.05 + 1.0:
+            solved = np.asarray(refined, float)
+    except Exception:
+        solved = np.asarray(seed, float)
     gaps = []
     for ray in rays:
         delta = solved - ray.centre
@@ -87,29 +102,97 @@ def measurement_ends(measurement: dict, points: list[dict]):
     return label_a, label_b
 
 
+def _reproj_median(extra) -> float:
+    values = [value for value in (extra or {}).get("reprojPx") or [] if value is not None]
+    if not values:
+        return 1e9
+    return float(np.median(values))
+
+
+def _triangulate_robust(rays):
+    """Locate a point that has at least two registered views.
+
+    The full set is used when the clicks agree. One bad view must not drop a
+    point that the other registered views still triangulate.
+    """
+    if len(rays) < 2:
+        return None
+
+    def attempt(group):
+        try:
+            xyz, extra = triangulate(group)
+        except (np.linalg.LinAlgError, ValueError):
+            return None
+        if not np.all(np.isfinite(xyz)):
+            return None
+        return xyz, extra, _reproj_median(extra)
+
+    full = attempt(rays)
+    best = full
+    if len(rays) > 2 and (full is None or full[2] > 12.0):
+        for index in range(len(rays)):
+            trial = attempt([ray for position, ray in enumerate(rays) if position != index])
+            if trial is None:
+                continue
+            if best is None or trial[2] + 0.5 < best[2]:
+                best = trial
+    if best is None or best[2] > 80.0:
+        return None
+    return best
+
+
 def triangulate_project(project: dict, ray_fn):
-    """ray_fn(photo_id, raw_x, raw_y) -> Ray | None."""
+    """ray_fn(photo_id, raw_x, raw_y) -> Ray | None.
+
+    A registered view is one photo with a pose. Two clicks on the same photo
+    are one view. A point is located from two or more registered views.
+    """
     located = {}
     report = []
     for point in project.get("points") or []:
         label = point.get("label") or point.get("id")
-        rays = []
+        observations = point.get("observations") or []
+        by_photo = {}
+        order = []
         missing = []
-        for obs in point.get("observations") or []:
+        for obs in observations:
             raw_x = obs.get("rawX", obs.get("x"))
             raw_y = obs.get("rawY", obs.get("y"))
-            ray = ray_fn(obs["photoId"], float(raw_x), float(raw_y))
+            try:
+                ray = ray_fn(obs["photoId"], float(raw_x), float(raw_y))
+            except (TypeError, ValueError, KeyError):
+                ray = None
             if ray is None:
-                missing.append(obs["photoId"])
-            else:
-                rays.append(ray)
-        info = {"label": label, "id": point.get("id"), "nObs": len(point.get("observations") or []), "nRegistered": len(rays), "unregistered": missing}
-        if len(rays) >= 2:
-            xyz, extra = triangulate(rays)
+                missing.append(obs.get("photoId"))
+                continue
+            photo = obs["photoId"]
+            if photo not in by_photo:
+                order.append(photo)
+            by_photo[photo] = ray
+        rays = [by_photo[photo] for photo in order]
+        info = {
+            "label": label,
+            "id": point.get("id"),
+            "nObs": len(observations),
+            "nRegistered": len(rays),
+            "unregistered": missing,
+        }
+        found = _triangulate_robust(rays) if len(rays) >= 2 else None
+        if found is not None:
+            xyz, extra, median = found
             located[label] = xyz
-            info.update({"method": "triangulated", "xyz": xyz.tolist(), **extra})
+            info.update(
+                {
+                    "method": "triangulated",
+                    "xyz": xyz.tolist(),
+                    "reprojMedianPx": round(float(median), 2),
+                    **extra,
+                }
+            )
+        elif len(rays) >= 2:
+            info["method"] = "non usabile (triangolazione non riuscita)"
         else:
-            info["method"] = f"non usabile ({len(rays)} viste registrate)"
+            info["method"] = f"non usabile ({len(rays)} viste registrate su {info['nObs']} osservazioni)"
         report.append(info)
     return located, report
 
@@ -141,6 +224,9 @@ def scale_report(project: dict, located: dict, ray_fn=None, monte_carlo: int = 0
                 "dMu": model,
             }
         )
+    # Every non-duplicate quote whose ends both triangulated. Each end needs
+    # at least two registered views. Two tapes of the same pair with different
+    # lengths both count; an exact repeat does not.
     used = [m for m in measurements if not m["duplicate"] and m["dMu"] and m["dMu"] > 1e-8 and m["mm"] > 0]
     if not used:
         raise RuntimeError("Nessuna quota collega due punti triangolati. Servono almeno due viste per punto e una distanza in millimetri.")
@@ -239,6 +325,27 @@ def _monte_carlo(project, ray_fn, used, scale, draws):
     return {key: round(float(np.std(values)), 1) if values else None for key, values in samples.items()}
 
 
+def _unlocated_reason(measure: dict, points: list) -> str:
+    """Say how many registered views each end has. Two stored clicks can still be one photo."""
+    by_label = {point.get("label"): point for point in points}
+    missing = []
+    for label in (measure.get("labelA"), measure.get("labelB")):
+        if not label:
+            continue
+        info = by_label.get(label)
+        if info is None:
+            missing.append(f"{label}: nessuna osservazione")
+            continue
+        registered = int(info.get("nRegistered") or 0)
+        observed = int(info.get("nObs") or 0)
+        if registered >= 2 and str(info.get("method", "")).startswith("triangulated"):
+            continue
+        missing.append(f"{label}: {registered} viste registrate su {observed} osservazioni")
+    if not missing:
+        return "punti non triangolati"
+    return "; ".join(missing)
+
+
 def render_markdown(report: dict) -> str:
     lines = [
         "# Scala",
@@ -260,7 +367,7 @@ def render_markdown(report: dict) -> str:
             lines.append(f"| {measure['pair']} | {measure['mm']:.1f} | | | duplicato |")
             continue
         if measure.get("modelMm") is None:
-            lines.append(f"| {measure['pair']} | {measure['mm']:.1f} | | | punti non triangolati |")
+            lines.append(f"| {measure['pair']} | {measure['mm']:.1f} | | | {_unlocated_reason(measure, report.get('points') or [])} |")
             continue
         lines.append(
             f"| {measure['pair']} | {measure['mm']:.1f} | {measure['modelMm']:.1f} | {measure['residMm']:+.1f} | {measure['residPct']:+.2f} |"

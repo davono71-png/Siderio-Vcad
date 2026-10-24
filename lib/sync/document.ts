@@ -144,7 +144,7 @@ function asIso(value: unknown, fallback: string) {
 }
 
 function asKind(value: unknown): ProjectKind {
-  return value === "stanza" || value === "facciata" ? value : "facciata";
+  return value === "stanza" || value === "facciata" || value === "oggetti" ? value : "facciata";
 }
 
 function asGeometry(value: unknown): ProjectGeometry {

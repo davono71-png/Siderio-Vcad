@@ -56,17 +56,12 @@ export function NewProjectScreen() {
         </label>
         <fieldset>
           <legend className="text-sm font-semibold">Tipo</legend>
-          <div className="mt-2 flex gap-2">
-            <button type="button" className={`chip ${kind === "stanza" ? "chip-on" : ""}`} onClick={() => setKind("stanza")}>
-              Stanza
-            </button>
-            <button
-              type="button"
-              className={`chip ${kind === "facciata" ? "chip-on" : ""}`}
-              onClick={() => setKind("facciata")}
-            >
-              Facciata
-            </button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(["stanza", "facciata", "oggetti"] as const).map((item) => (
+              <button key={item} type="button" className={`chip ${kind === item ? "chip-on" : ""}`} onClick={() => setKind(item)}>
+                {item === "stanza" ? "Stanza" : item === "facciata" ? "Facciata" : "Oggetti-Esterni"}
+              </button>
+            ))}
           </div>
         </fieldset>
         <label className="text-sm font-semibold">

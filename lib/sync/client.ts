@@ -161,7 +161,7 @@ export async function deleteRemoteSurvey(projectId: string) {
 export type RemoteCard = {
   id: string;
   name: string;
-  kind: "stanza" | "facciata";
+  kind: "stanza" | "facciata" | "oggetti";
   updatedAt: string;
   revision: number;
   photos: number;

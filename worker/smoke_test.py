@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from siderio_worker import export_mesh, facade, openmvs, options, pipeline, prep, previews, r2, room, scale, sfm, status, walls  # noqa: E402
+from siderio_worker import export_mesh, facade, oggetti, openmvs, options, pipeline, prep, previews, r2, room, scale, sfm, status, walls  # noqa: E402
 import handler  # noqa: E402
 import test_local  # noqa: E402
 
@@ -249,6 +249,72 @@ def check_scale():
     assert scale.consistency_warning(
         {"measurements": [{"pair": "A-B", "mm": 1000.0, "duplicate": False}], "leave_one_out": [{"leftOut": "A-B", "errMm": 10.0, "predictedMm": 1010.0}]}
     ) is None
+    _check_scale_uses_every_two_view_quote()
+
+
+def _check_scale_uses_every_two_view_quote():
+    """Every quote whose ends have two registered views enters the fit.
+
+    Two different lengths of the same pair both count. One bad extra view
+    does not drop the point. A single registered view stays out.
+    """
+    cams = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([2.2, 0.4, 0.0]),
+        np.array([-1.6, 0.7, 0.15]),
+        np.array([0.4, -1.8, 0.1]),
+    ]
+    world = {
+        "A": np.array([0.15, 0.05, 5.0]),
+        "B": np.array([1.05, 0.25, 5.15]),
+        "C": np.array([-0.35, -0.15, 4.8]),
+        "H": np.array([0.55, 0.7, 5.35]),
+        "D": np.array([2.0, 0.0, 5.5]),
+    }
+    views = {"A": (0, 1), "B": (0, 1, 2), "C": (0, 2), "H": (1, 2), "D": (0,)}
+
+    def project_uv(cam_index, point):
+        local = point - cams[cam_index]
+        return [500 * local[0] / local[2] + 320, 500 * local[1] / local[2] + 240]
+
+    points = []
+    for label, xyz in world.items():
+        observations = []
+        for cam_index in views[label]:
+            uv = project_uv(cam_index, xyz)
+            observations.append({"photoId": str(cam_index), "rawX": uv[0], "rawY": uv[1]})
+        if label == "B":
+            observations.append({"photoId": "3", "rawX": 12.0, "rawY": 900.0})
+        points.append({"id": label.lower(), "label": label, "observations": observations})
+
+    def ray_fn(photo_id, raw_x, raw_y):
+        return _pinhole(cams[int(photo_id)], np.array([raw_x, raw_y]))
+
+    project = {
+        "points": points,
+        "measurements": [
+            {"pointA": "a", "pointB": "b", "labelA": "A", "labelB": "B", "distanceMm": 440.0},
+            {"pointA": "a", "pointB": "b", "labelA": "A", "labelB": "B", "distanceMm": 440.0},
+            {"pointA": "h", "pointB": "b", "labelA": "H", "labelB": "B", "distanceMm": 960.0},
+            {"pointA": "h", "pointB": "b", "labelA": "H", "labelB": "B", "distanceMm": 1056.0},
+            {"pointA": "b", "pointB": "c", "labelA": "B", "labelB": "C", "distanceMm": 517.0},
+            {"pointA": "d", "pointB": "a", "labelA": "D", "labelB": "A", "distanceMm": 3350.0},
+        ],
+    }
+    located, report = scale.triangulate_project(project, ray_fn)
+    by_label = {item["label"]: item for item in report}
+    assert by_label["A"]["nRegistered"] == 2, by_label["A"]
+    assert by_label["B"]["nRegistered"] == 4, by_label["B"]
+    assert by_label["D"]["nRegistered"] == 1, by_label["D"]
+    assert "A" in located and "B" in located and "C" in located and "H" in located
+    assert "D" not in located
+    assert np.linalg.norm(located["B"] - world["B"]) < 0.05, located["B"]
+    fitted = scale.scale_report(project, located)
+    used_pairs = [(item["pair"], item["mm"]) for item in fitted["measurements"] if item["dMu"] and not item["duplicate"]]
+    assert fitted["n_used"] == 4, (fitted["n_used"], used_pairs)
+    assert ("H-B", 960.0) in [(item["pair"], item["mm"]) for item in fitted["measurements"] if not item["duplicate"] and item["dMu"]]
+    assert ("H-B", 1056.0) in [(item["pair"], item["mm"]) for item in fitted["measurements"] if not item["duplicate"] and item["dMu"]]
+    assert all(item["pair"] != "D-A" or not item["dMu"] for item in fitted["measurements"])
 
 
 def _span(plane, axis):
@@ -677,6 +743,8 @@ def check_real_facade_fixture():
         f"office fixture {wall['widthMm']:.0f} x {wall['heightMm']:.0f} mm, "
         f"door {door['widthMm']:.0f}x{door['heightMm']:.0f} at x {door['x0']:.0f}"
     )
+    assert oggetti.assumptions_hold(data["points"], data["normals"], mm_per_unit=1.0, up_prior=np.array([0.0, 1.0, 0.0]))
+    assert oggetti.facade_result_holds(detected)
 
 
 def check_imports_and_options():
@@ -685,6 +753,8 @@ def check_imports_and_options():
     assert opt.downscale == 3 and opt.wall_thickness_mm == 120 and opt.room_overrides["xmin"] == 1
     assert options.parse_options({}).mode is None
     assert options.parse_options({"mode": "Facciata"}).mode == "facciata"
+    assert options.parse_options({"mode": "oggetti"}).mode == "oggetti"
+    assert options.resolve_mode(options.parse_options({}), {"project": {"kind": "oggetti"}}) == "oggetti"
     assert options.resolve_mode(options.parse_options({}), {"project": {"kind": "facciata"}}) == "facciata"
     assert options.resolve_mode(options.parse_options({"mode": "stanza"}), {"project": {"kind": "facciata"}}) == "stanza"
     assert options.resolve_mode(options.parse_options({}), {"version": 2}) == "stanza"
@@ -991,9 +1061,105 @@ def _grid_plane(origin, axis_u, axis_v, u0, u1, v0, v1, step):
     return origin + uu.reshape(-1, 1) * axis_u + vv.reshape(-1, 1) * axis_v
 
 
+def _shed_face(gap):
+    rng = np.random.default_rng(2)
+    pts = []
+    for x in np.linspace(80, 3920, 42):
+        for y in np.linspace(80, 1400, 18):
+            if gap and 1500 <= x <= 2300 and y < 1100:
+                continue
+            pts.append([x, y, float(rng.normal(0, 6))])
+    return np.asarray(pts, float)
+
+
+def check_oggetti():
+    """A shed on a terrace is not one facade wall, and the STEP names the solids."""
+    weak = {
+        "mm_per_unit": 1.0,
+        "planes": [
+            {"role": "background", "support": 297, "width": 40394},
+            {"role": "front", "support": 39578, "width": 3786},
+        ],
+    }
+    assert oggetti.facade_result_holds(weak) is False
+    rng = np.random.default_rng(1)
+    ground = np.column_stack([rng.uniform(0, 8000, 2500), rng.normal(0, 12, 2500), rng.uniform(0, 6000, 2500)])
+    ground_n = np.tile([0.0, 1.0, 0.0], (len(ground), 1))
+    wall = np.column_stack([rng.uniform(300, 5200, 900), rng.uniform(0, 1400, 900), rng.normal(1100, 18, 900)])
+    wall_n = np.tile([0.0, 0.0, 1.0], (len(wall), 1))
+    roof = np.column_stack([rng.uniform(5200, 7200, 700), rng.normal(1800, 10, 700), rng.uniform(2800, 4800, 700)])
+    roof_n = np.tile([0.0, 1.0, 0.0], (len(roof), 1))
+    faces = []
+    face_n = []
+    for x0, x1, z0, z1, normal in (
+        (5200, 7200, 2800, 2800, [0, 0, -1]),
+        (5200, 7200, 4800, 4800, [0, 0, 1]),
+        (5200, 5200, 2800, 4800, [-1, 0, 0]),
+        (7200, 7200, 2800, 4800, [1, 0, 0]),
+    ):
+        count = 280
+        xs = rng.uniform(x0, x1, count) if x0 != x1 else rng.normal(x0, 12, count)
+        zs = rng.uniform(z0, z1, count) if z0 != z1 else rng.normal(z0, 12, count)
+        faces.append(np.column_stack([xs, rng.uniform(0, 1800, count), zs]))
+        face_n.append(np.tile(np.asarray(normal, float), (count, 1)))
+    terrace = np.column_stack([rng.uniform(14000, 18000, 900), rng.normal(-700, 12, 900), rng.uniform(8000, 12000, 900)])
+    terrace_n = np.tile([0.0, 1.0, 0.0], (len(terrace), 1))
+    points = np.vstack([ground, wall, roof, *faces, terrace])
+    normals = np.vstack([ground_n, wall_n, roof_n, *face_n, terrace_n])
+    built = oggetti.reconstruct_mm(points, normals, wall_thickness_mm=120)
+    names = [solid["name"] for solid in built["solids"]]
+    assert "terreno" in names, names
+    assert "terreno_2" not in names, names
+    terrain = next(solid for solid in built["solids"] if solid["name"] == "terreno")
+    terrain_x = [point[0] for point in terrain["polygon"]]
+    assert max(terrain_x) < 11000, max(terrain_x)
+    assert any(name.startswith("edificio") for name in names), names
+    assert any(name.startswith("muro") for name in names), names
+    shed = {"kind": "building", "footprint": [[0.0, 0.0], [4000.0, 0.0], [4000.0, 2000.0], [0.0, 2000.0]], "width": 4000.0, "height": 1500.0}
+    long_wall = oggetti._box(np.array([500.0, 0.0, -1500.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), 5000.0, 900.0, 150.0)
+    near = oggetti._box(np.array([4200.0, 0.0, 400.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), 1200.0, 800.0, 150.0)
+    chip = oggetti._box(np.array([14000.0, 0.0, 4000.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), 900.0, 800.0, 150.0)
+    terrace_wall = oggetti._box(np.array([14000.0, -715.0, 8000.0]), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), 3200.0, 2600.0, 150.0)
+    kept_buildings, kept_walls, _kept_slabs = oggetti._drop_small_isolated([shed], [long_wall, near, chip, terrace_wall], [])
+    assert kept_buildings == [shed]
+    assert long_wall in kept_walls and near in kept_walls and chip not in kept_walls and terrace_wall not in kept_walls
+    face_box = oggetti._box(np.zeros(3), np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]), 4000.0, 1480.0, 120.0)
+    gapped = _shed_face(True)
+    opening = oggetti._opening_on_box(gapped, face_box, 0.0, 1480.0)
+    assert opening is not None, "a 1.48 m shed with a gap must be cut"
+    assert opening["heightMm"] < 1400, opening
+    assert opening["heightMm"] >= 0.45 * 1480, opening
+    assert oggetti._opening_on_box(_shed_face(False), face_box, 0.0, 1480.0) is None
+    assert oggetti._opening_on_box(gapped, face_box, 0.0, 600.0) is None
+    scene = {"solids_mm": built["solids"], "mm_per_unit": 1.0, "dims": built["dims"]}
+    with tempfile.TemporaryDirectory() as folder:
+        step = os.path.join(folder, "walls.step")
+        walls.export_oggetti_step(scene, step, extra_step=os.path.join(folder, "extra.step"), residual_mm=built["residual"])
+        text = open(step, encoding="utf-8", errors="replace").read()
+    for name in ("terreno", "edificio_1"):
+        assert f"PRODUCT('{name}'" in text, name
+    reason = scale.render_markdown(
+        {
+            "mm_per_unit": 1.0,
+            "rms_resid_mm": 0.0,
+            "max_abs_resid_mm": 0.0,
+            "n_used": 1,
+            "measurements": [{"pair": "D-E", "labelA": "D", "labelB": "E", "mm": 3350.0, "duplicate": False}],
+            "points": [
+                {"label": "D", "nObs": 1, "nRegistered": 1, "method": "non usabile (1 viste registrate su 1 osservazioni)"},
+                {"label": "E", "nObs": 1, "nRegistered": 1, "method": "non usabile (1 viste registrate su 1 osservazioni)"},
+            ],
+        }
+    )
+    assert "D: 1 viste registrate su 1 osservazioni" in reason, reason
+    assert "punti non triangolati" not in reason
+    print("oggetti", ", ".join(names))
+
+
 def main():
     check_imports_and_options()
     check_scale()
+    check_oggetti()
     check_walls()
     check_ceiling_fallbacks()
     check_facade()

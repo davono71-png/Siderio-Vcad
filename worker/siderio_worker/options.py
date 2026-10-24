@@ -28,8 +28,8 @@ class Options:
     skip_dense: bool = False
     allow_missing: bool = False
     local_project_dir: str | None = None
-    # None means "read project.json". stanza is a room; facciata is a wall
-    # with the objects in front of it, and does not need a floor or a ceiling.
+    # None means "read project.json". stanza is a room; facciata is one wall;
+    # oggetti is a generic outdoor scene (ground, walls, buildings).
     mode: str | None = None
     # pareti keeps today's walls. completa also exports every surface and the
     # leftover objects. Missing means "read project.json, otherwise pareti".
@@ -87,8 +87,8 @@ def parse_options(raw) -> Options:
     opt.local_project_dir = str(local) if local else None
     if raw.get("mode") not in (None, ""):
         mode = str(raw.get("mode")).strip().lower()
-        if mode not in ("stanza", "facciata"):
-            raise ValueError("options.mode deve essere stanza o facciata.")
+        if mode not in ("stanza", "facciata", "oggetti"):
+            raise ValueError("options.mode deve essere stanza, facciata o oggetti.")
         opt.mode = mode
     if raw.get("geometry") not in (None, ""):
         geometry = str(raw.get("geometry")).strip().lower()
@@ -147,8 +147,8 @@ def resolve_mode(options: Options, project: dict) -> str:
     kind = project_kind(project)
     if kind is None:
         return "stanza"
-    if kind not in ("stanza", "facciata"):
-        raise ValueError(f"project.kind '{kind}' non è stanza o facciata.")
+    if kind not in ("stanza", "facciata", "oggetti"):
+        raise ValueError(f"project.kind '{kind}' non è stanza, facciata o oggetti.")
     return kind
 
 

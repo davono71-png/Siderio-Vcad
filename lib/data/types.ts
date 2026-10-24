@@ -1,6 +1,6 @@
 /** Domain model for a rilievo. Kept free of storage details so a Supabase sync can reuse it. */
 
-export type ProjectKind = "stanza" | "facciata";
+export type ProjectKind = "stanza" | "facciata" | "oggetti";
 
 /** pareti is today's walls. completa also exports every surface and the leftover objects. */
 export type ProjectGeometry = "pareti" | "completa";

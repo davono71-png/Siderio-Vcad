@@ -291,8 +291,8 @@ export function ResultsScreen({ projectId }: { projectId: string }) {
 
       {payload ? (
         <section className="mt-5">
-          <div className="flex gap-2">
-            {(["stanza", "facciata"] as const).map((kind) => (
+          <div className="flex flex-wrap gap-2">
+            {(["stanza", "facciata", "oggetti"] as const).map((kind) => (
               <button key={kind} type="button" className={`chip ${mode === kind ? "chip-on" : ""}`} onClick={() => setMode(kind)}>
                 {kindLabel(kind)}
               </button>

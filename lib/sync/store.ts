@@ -8,7 +8,7 @@ const INDEX_KEY = "rilievi/index.json";
 export type SurveyCard = {
   id: string;
   name: string;
-  kind: "stanza" | "facciata";
+  kind: "stanza" | "facciata" | "oggetti";
   updatedAt: string;
   revision: number;
   photos: number;

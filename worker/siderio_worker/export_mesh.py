@@ -42,11 +42,16 @@ def export_textured(room: dict, mvs_dir: str, out_dir: str, mm_per_unit: float, 
     transform = np.diag([mm_per_unit, mm_per_unit, mm_per_unit, 1.0]) @ np.asarray(room["transform_colmap_to_room"], float)
     vertices = trimesh.transform_points(vertices, transform)
     dims = room["dims"]
-    high = np.array([dims["length_x"], dims["width_y"], dims["height_z"]], float) * mm_per_unit
     margin = float(crop_margin_mm)
+    if room.get("bounds"):
+        low = np.asarray(room["bounds"]["min"], float) * mm_per_unit - margin
+        high = np.asarray(room["bounds"]["max"], float) * mm_per_unit + margin
+    else:
+        low = np.full(3, -margin)
+        high = np.array([dims["length_x"], dims["width_y"], dims["height_z"]], float) * mm_per_unit + margin
 
     def inside(xyz):
-        return np.all((xyz >= -margin) & (xyz <= high + margin), axis=1)
+        return np.all((xyz >= low) & (xyz <= high), axis=1)
 
     keep = inside(vertices)[faces].all(axis=1)
     faces = faces[keep]

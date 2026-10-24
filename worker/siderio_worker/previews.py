@@ -70,6 +70,18 @@ def _plan(room_mm: dict, path: str):
     canvas = Image.new("RGB", (1100, 900), "white")
     draw = ImageDraw.Draw(canvas)
     pad = 80
+    if room_mm.get("mode") == "oggetti":
+        depth = float(dims["height_z"])
+        label = f"oggetti {length:.0f} x {depth:.0f} mm, altezza {width:.0f} mm"
+        draw.text((pad, 24), label, fill=(20, 40, 60))
+        plan_scale = min((canvas.width - 2 * pad) / max(length, 1), (canvas.height - 2 * pad) / max(depth, 1))
+
+        def xz(x, z):
+            return pad + x * plan_scale, canvas.height - pad - z * plan_scale
+
+        draw.polygon([xz(0, 0), xz(length, 0), xz(length, depth), xz(0, depth)], outline=(20, 40, 60), width=4)
+        canvas.save(path)
+        return
     scale = min((canvas.width - 2 * pad) / max(length, 1), (canvas.height - 2 * pad) / max(width, 1))
     def xy(x, y):
         return pad + x * scale, canvas.height - pad - y * scale
@@ -106,6 +118,23 @@ def _plan(room_mm: dict, path: str):
     canvas.save(path)
 
 
+def oggetti_views(length, width, height):
+    """Y is up. X and Z are the two horizontal axes, so the plan looks down."""
+    centre = np.array([length / 2.0, max(width, 1.0) * 0.35, height / 2.0])
+    return {
+        "preview_iso.png": (
+            np.array([length * 1.15, max(width, 1.0) * 1.3, -height * 0.25]),
+            centre,
+            (0.0, 1.0, 0.0),
+        ),
+        "preview_top.png": (
+            np.array([length / 2.0, max(width, height, 1.0) * 2.4, height / 2.0]),
+            np.array([length / 2.0, 0.0, height / 2.0]),
+            (0.0, 0.0, -1.0),
+        ),
+    }
+
+
 def facade_views(length, width, height):
     """Cameras for a facade whose vertical axis is Y and whose wall faces +Z."""
     centre = np.array([length / 2.0, width / 2.0, 0.0])
@@ -134,6 +163,8 @@ def write_previews(out_dir: str, room_mm: dict):
     length, width, height = float(dims["length_x"]), float(dims["width_y"]), float(dims["height_z"])
     if room_mm.get("mode") == "facciata":
         views = facade_views(length, width, height)
+    elif room_mm.get("mode") == "oggetti":
+        views = oggetti_views(length, width, height)
     else:
         centre = np.array([length / 2, width / 2, height / 3])
         views = {

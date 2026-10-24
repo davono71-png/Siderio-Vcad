@@ -14,7 +14,9 @@ export function formatMm(value: number) {
 }
 
 export function kindLabel(kind: ProjectKind) {
-  return kind === "facciata" ? "Facciata" : "Stanza";
+  if (kind === "facciata") return "Facciata";
+  if (kind === "oggetti") return "Oggetti-Esterni";
+  return "Stanza";
 }
 
 export function nextPointLabel(used: string[]) {

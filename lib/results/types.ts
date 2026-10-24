@@ -15,7 +15,7 @@ export type ResultsPayload = {
   projectId: string;
   empty: boolean;
   name: string | null;
-  kind: "stanza" | "facciata" | null;
+  kind: "stanza" | "facciata" | "oggetti" | null;
   engineReady: boolean;
   files: { name: ResultName; bytes: number; viewUrl: string | null }[];
   scene: SceneDoc | null;

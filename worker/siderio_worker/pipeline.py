@@ -8,7 +8,7 @@ import shutil
 import time
 import traceback
 
-from . import complete, export_mesh, facade, openmvs, prep, r2, room, scale, sfm, walls
+from . import complete, export_mesh, facade, oggetti, openmvs, prep, r2, room, scale, sfm, walls
 from .options import Options, resolve_geometry, resolve_mode
 from .previews import write_previews
 from .status import StatusWriter
@@ -110,7 +110,9 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                     log=lambda msg: print(f"[mvs] {msg}", flush=True),
                 )
             stage = "planes"
-            if mode == "facciata":
+            if mode == "oggetti":
+                status.update(stage, 90, "Riconosco terreno, muri e corpi", timings)
+            elif mode == "facciata":
                 status.update(stage, 90, "Riconosco il piano di fondo e le superfici davanti", timings)
             else:
                 status.update(stage, 90, "Riconosco pavimento, soffitto e pareti", timings)
@@ -118,34 +120,32 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 points, normals = _load_cloud(os.path.join(mvs_dir, "scene_dense.ply"), mm_per_unit)
                 cameras, camera_ups = _camera_poses(dense_dir)
                 up = pose.get("upColmap") or sfm.image_up_prior(sfm_info["sparse"])
-                if mode == "facciata":
-                    model_room = facade.detect_facade(
-                        points,
-                        normals,
-                        cameras=cameras,
-                        mm_per_unit=mm_per_unit,
-                        up_prior=up,
-                        wall_thickness_mm=options.wall_thickness_mm,
-                        camera_ups=camera_ups,
-                    )
-                else:
-                    model_room = room.detect_room(
-                        points,
-                        normals,
-                        cameras=cameras,
-                        mm_per_unit=mm_per_unit,
-                        overrides=options.room_overrides,
-                        up_prior=up,
-                    )
-                    if options.openings_mm:
-                        model_room = room.apply_openings_mm(model_room, options.openings_mm, mm_per_unit)
+                model_room, mode = _fit_model(
+                    mode,
+                    points,
+                    normals,
+                    cameras,
+                    camera_ups,
+                    mm_per_unit,
+                    up,
+                    options,
+                )
                 model_room["mm_per_unit"] = mm_per_unit
+            residual_mm = model_room.pop("residual_mm", None)
             _write_json(os.path.join(work, "room_model.json"), model_room)
             stage = "export"
             status.update(stage, 94, "Esporto STEP, GLB e OBJ", timings)
             with _timed(timings, "export"):
                 export_mesh.export_textured(model_room, mvs_dir, out_dir, mm_per_unit)
-                if mode == "facciata":
+                if mode == "oggetti":
+                    walls.export_oggetti_step(
+                        model_room,
+                        os.path.join(out_dir, "walls.step"),
+                        extra_step=os.path.join(out_dir, "extra.step"),
+                        residual_mm=residual_mm,
+                    )
+                    room_mm = oggetti.to_millimetres(model_room, mm_per_unit)
+                elif mode == "facciata":
                     scene_mm = facade.to_millimetres(model_room, mm_per_unit)
                     walls.export_facade_step(
                         scene_mm,
@@ -197,14 +197,14 @@ def run_job(project_id: str, options: Options, work_root: str, hook=None, upload
                 if report.get("warning"):
                     room_mm["scale"]["warning"] = report["warning"]
                 _write_json(os.path.join(out_dir, "room.json"), room_mm)
-                if mode == "facciata" or room_mm.get("surfaces"):
+                if mode in ("facciata", "oggetti") or room_mm.get("surfaces"):
                     _write_json(os.path.join(out_dir, "scene.json"), room_mm)
                 write_previews(out_dir, room_mm)
         diagnostic = _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options, mode)
         if mvs_dir and os.path.isfile(os.path.join(out_dir, "room.json")):
             with open(os.path.join(out_dir, "room.json"), encoding="utf-8") as handle:
                 scene_doc = json.load(handle)
-            if scene_doc.get("mode") == "facciata":
+            if scene_doc.get("mode") in ("facciata", "oggetti"):
                 diagnostic["note"] = scene_doc.get("note")
                 diagnostic["upSource"] = scene_doc.get("upSource")
                 diagnostic["upAxis"] = scene_doc.get("upAxis")
@@ -388,6 +388,72 @@ def _load_cloud(path: str, mm_per_unit: float):
     return np.asarray(down.points), np.asarray(down.normals)
 
 
+def _fit_model(mode, points, normals, cameras, camera_ups, mm_per_unit, up, options: Options):
+    """Stanza stays a room. Facciata stays one wall, unless that fit does not hold."""
+    if mode == "oggetti" or (
+        mode == "facciata"
+        and not oggetti.assumptions_hold(
+            points,
+            normals,
+            cameras=cameras,
+            mm_per_unit=mm_per_unit,
+            up_prior=up,
+            camera_ups=camera_ups,
+        )
+    ):
+        fallback = "facciata" if mode == "facciata" else None
+        return (
+            oggetti.detect_oggetti(
+                points,
+                normals,
+                cameras=cameras,
+                mm_per_unit=mm_per_unit,
+                up_prior=up,
+                wall_thickness_mm=options.wall_thickness_mm,
+                camera_ups=camera_ups,
+                fallback_from=fallback,
+            ),
+            "oggetti",
+        )
+    if mode == "facciata":
+        model = facade.detect_facade(
+            points,
+            normals,
+            cameras=cameras,
+            mm_per_unit=mm_per_unit,
+            up_prior=up,
+            wall_thickness_mm=options.wall_thickness_mm,
+            camera_ups=camera_ups,
+        )
+        if oggetti.facade_result_holds(model):
+            return model, "facciata"
+        print("[pipeline] la facciata non è un solo muro di fondo: passo agli oggetti", flush=True)
+        return (
+            oggetti.detect_oggetti(
+                points,
+                normals,
+                cameras=cameras,
+                mm_per_unit=mm_per_unit,
+                up_prior=up,
+                wall_thickness_mm=options.wall_thickness_mm,
+                camera_ups=camera_ups,
+                fallback_from="facciata",
+            ),
+            "oggetti",
+        )
+    model = room.detect_room(
+        points,
+        normals,
+        cameras=cameras,
+        mm_per_unit=mm_per_unit,
+        overrides=options.room_overrides,
+        up_prior=up,
+    )
+    if options.openings_mm:
+        model = room.apply_openings_mm(model, options.openings_mm, mm_per_unit)
+    return model, mode
+
+
 def _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, why, options: Options, mode: str):
     public_pose = {k: v for k, v in pose.items() if k != "perImage"}
     public_pose["worst"] = sorted((pose.get("perImage") or {}).items(), key=lambda kv: kv[1]["dirErrDeg"], reverse=True)[:8]
@@ -408,6 +474,15 @@ def _diagnostic(project_id, prepared, sfm_info, pose, report, timings, device, w
             "nUsed": report["n_used"],
             "source": report["scale_source"],
             "warning": report.get("warning"),
+            "points": [
+                {
+                    "label": point.get("label"),
+                    "nObs": point.get("nObs"),
+                    "nRegistered": point.get("nRegistered"),
+                    "method": point.get("method"),
+                }
+                for point in report.get("points") or []
+            ],
         },
         "overrides": options.room_overrides,
         "timingsSec": {k: round(v, 2) for k, v in timings.items()},
@@ -422,7 +497,7 @@ def _summary(project_id, sfm_info, report, out_dir, outputs, timings):
     if os.path.isfile(room_path):
         document = json.load(open(room_path, encoding="utf-8"))
         mode = document.get("mode", "stanza")
-        if mode == "facciata":
+        if mode in ("facciata", "oggetti"):
             planes = [
                 {
                     "role": plane.get("role"),
