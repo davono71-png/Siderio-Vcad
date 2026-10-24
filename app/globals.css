@@ -242,6 +242,8 @@ select {
 }
 
 .point-thumb img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
@@ -249,8 +251,9 @@ select {
 }
 
 .point-thumb-wait {
+  position: absolute;
+  inset: 0;
   display: grid;
-  height: 100%;
   place-items: center;
   color: #9a9a9a;
   font-size: 0.68rem;
@@ -292,7 +295,7 @@ select {
   white-space: nowrap;
 }
 
-.photo-tile span {
+.photo-tile > span:not(.point-thumb) {
   display: block;
   padding: 0.3rem 0.4rem 0.45rem;
   font-size: 0.68rem;
@@ -843,6 +846,9 @@ select {
 }
 
 .desk-thumb {
+  /* A long strip must scroll, not squeeze every photo to a line. */
+  flex: none;
+  width: 100%;
   overflow: hidden;
   border-radius: 0.6rem;
   color: white;
@@ -854,10 +860,11 @@ select {
 }
 
 .desk-thumb .point-thumb {
-  aspect-ratio: 4 / 3;
+  /* Phone photos are mostly upright. */
+  aspect-ratio: 3 / 4;
 }
 
-.desk-thumb span {
+.desk-thumb > span:not(.point-thumb) {
   display: block;
   padding: 0.15rem 0.3rem 0.3rem;
   font-size: 0.72rem;

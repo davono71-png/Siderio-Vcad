@@ -81,7 +81,7 @@ export function Annotator({
         }
         const blob = photo.blob ?? (photo.meta.r2Key ? await fetchRemotePhoto(photo.meta.r2Key) : null);
         if (!blob) {
-          setError("Foto non trovata su questo telefono.");
+          setError("Foto non arrivata dall’archivio. Controlla la rete e riapri la foto.");
           return;
         }
         const display = await uprightUrl(blob, photo.meta);

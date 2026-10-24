@@ -316,7 +316,7 @@ export function QuoteScreen({ projectId }: { projectId: string }) {
               className={`desk-thumb ${active?.photo.id === photo.id ? "on" : ""}`}
               onClick={() => setActivePhoto(photo.id)}
             >
-              <PointThumb photo={photo} url={url} points={points} frame={4 / 3} />
+              <PointThumb photo={photo} url={url} points={points} frame={3 / 4} />
               <span>{String(photo.sequence).padStart(3, "0")}</span>
             </button>
           ))}
