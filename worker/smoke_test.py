@@ -1132,12 +1132,18 @@ def check_oggetti():
     assert oggetti._opening_on_box(_shed_face(False), face_box, 0.0, 1480.0) is None
     assert oggetti._opening_on_box(gapped, face_box, 0.0, 600.0) is None
     scene = {"solids_mm": built["solids"], "mm_per_unit": 1.0, "dims": built["dims"]}
-    with tempfile.TemporaryDirectory() as folder:
-        step = os.path.join(folder, "walls.step")
-        walls.export_oggetti_step(scene, step, extra_step=os.path.join(folder, "extra.step"), residual_mm=built["residual"])
-        text = open(step, encoding="utf-8", errors="replace").read()
-    for name in ("terreno", "edificio_1"):
-        assert f"PRODUCT('{name}'" in text, name
+    try:
+        import cadquery  # noqa: F401
+    except ImportError:
+        # Like the complete geometry check: the STEP is written in the Docker smoke run.
+        print("oggetti senza cadquery: STEP non scritto")
+    else:
+        with tempfile.TemporaryDirectory() as folder:
+            step = os.path.join(folder, "walls.step")
+            walls.export_oggetti_step(scene, step, extra_step=os.path.join(folder, "extra.step"), residual_mm=built["residual"])
+            text = open(step, encoding="utf-8", errors="replace").read()
+        for name in ("terreno", "edificio_1"):
+            assert f"PRODUCT('{name}'" in text, name
     reason = scale.render_markdown(
         {
             "mm_per_unit": 1.0,
